@@ -70,6 +70,12 @@ from tools.base_tool import (
 # margin is thin instead of letting the creator burn renders re-encoding clips.
 _MIN_REMOTION_TEMP_FREE_MB = 1024
 
+# How long `npx remotion browser ensure` may take to download + unpack the
+# headless browser before we give up on pre-warming (the render itself will
+# then attempt its own lazy download). Cold downloads of ~100 MB on a slow
+# mirror have been observed at ~10 minutes on CI boxes, so this is generous.
+_REMOTION_BROWSER_ENSURE_TIMEOUT_S = 900
+
 
 class VideoCompose(BaseTool):
     name = "video_compose"
@@ -1061,7 +1067,9 @@ class VideoCompose(BaseTool):
 
         try:
             # Run from inside the composer dir so npx resolves the local
-            # remotion binary (mirrors _remotion_render).
+            # remotion binary (mirrors _remotion_render). Ensure the headless
+            # browser first so a cold cache cannot race a parallel render.
+            self._ensure_remotion_browser(composer_dir)
             self.run_command(cmd, timeout=1800, cwd=composer_dir)
         except Exception as e:
             return ToolResult(success=False, error=f"Atelier (bespoke) Remotion render failed: {e}")
@@ -1962,6 +1970,51 @@ class VideoCompose(BaseTool):
 
         return render_result
 
+    def _ensure_remotion_browser(self, composer_dir: Path) -> None:
+        """Pre-download the Remotion headless browser before rendering.
+
+        ``npx remotion render`` lazily downloads chrome-headless-shell on first
+        use. When several renders start concurrently on a cold cache, each one
+        races to download and unpack the same zip into the shared
+        ``node_modules/.remotion`` directory, and the slower process dies with
+        ``ENOENT: no such file or directory, unlink ...zip?clear`` (observed
+        killing one of two parallel reel renders on a 4-vCPU Kaggle box).
+        ``npx remotion browser ensure`` is the idempotent equivalent of that
+        download; running it up front under an exclusive lock means concurrent
+        first-time downloads are serialised and the browser is fetched exactly
+        once. Failures are non-fatal: if a browser is already present the
+        following render proceeds normally either way.
+        """
+        cache_dir = composer_dir / "node_modules" / ".remotion"
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return  # read-only or missing node_modules — let the render report it
+        lock_path = cache_dir / "browser-ensure.lock"
+        try:
+            with open(lock_path, "w") as lock_handle:
+                try:
+                    import fcntl
+                    fcntl.flock(lock_handle, fcntl.LOCK_EX)
+                except (ImportError, OSError):
+                    pass  # non-POSIX platform — best effort without the lock
+                self.run_command(
+                    ["npx", "remotion", "browser", "ensure"],
+                    timeout=_REMOTION_BROWSER_ENSURE_TIMEOUT_S,
+                    cwd=composer_dir,
+                )
+        except subprocess.CalledProcessError as e:
+            detail = (getattr(e, "detail", None) or e.stderr or e.stdout or "")
+            logging.getLogger(__name__).warning(
+                "remotion browser ensure failed (exit %s); continuing — the "
+                "render will attempt its own browser setup: %s",
+                e.returncode, str(detail)[-400:],
+            )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            logging.getLogger(__name__).warning(
+                "remotion browser ensure did not complete (%s); continuing", e
+            )
+
     @staticmethod
     def _remotion_temp_free_mb() -> Optional[int]:
         """Free megabytes in the temp dir Remotion will use (honours TMPDIR).
@@ -2151,7 +2204,10 @@ class VideoCompose(BaseTool):
             # Invoke from inside the composer dir so npx can resolve the
             # local remotion binary via node_modules/.bin. Without this,
             # Windows npx cannot locate the CLI and returns "could not
-            # determine executable to run".
+            # determine executable to run". Ensure the headless browser up
+            # front so a cold cache cannot race a parallel render (see
+            # _ensure_remotion_browser).
+            self._ensure_remotion_browser(composer_dir)
             self.run_command(cmd, timeout=subprocess_timeout, cwd=composer_dir)
         except subprocess.CalledProcessError as e:
             # run_command uses check=True + capture_output, so the useful
