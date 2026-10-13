@@ -173,7 +173,7 @@ class PixabayMusic(BaseTool):
         except Exception as e:
             return ToolResult(
                 success=False,
-                error=f"Pixabay music search failed: {e}",
+                error=self._describe_failure(e),
                 duration_seconds=round(time.time() - start, 2),
             )
 
@@ -195,6 +195,31 @@ class PixabayMusic(BaseTool):
             cost_usd=0.0,
             duration_seconds=round(time.time() - start, 2),
         )
+
+    @staticmethod
+    def _describe_failure(exc: Exception) -> str:
+        """Turn a raw transport error into an actionable tool error.
+
+        Pixabay serves this page behind an edge WAF: from datacenter/CI IPs
+        (and some regions) every request returns 403 regardless of headers,
+        so the generic "search failed" message sent agents hunting for a bug
+        in the parser. Name the real cause and the zero-key alternatives.
+        """
+        status = getattr(exc, "code", None)
+        if status in (403, 429):
+            return (
+                "Pixabay music search failed: HTTP {} (access blocked). Pixabay's "
+                "edge CDN rejects requests from some networks (datacenter/cloud/CI "
+                "IPs, VPNs, and some regions) no matter what headers are sent. "
+                "No API key can fix this from a blocked IP. Use one of these "
+                "instead:\n"
+                "  1. Drop a royalty-free track into music_library/ and use the "
+                "`music_library` tool (no key, no network).\n"
+                "  2. Set FREESOUND_API_KEY and use `freesound_music` "
+                "(free key: https://freesound.org/apiv2/apply/).\n"
+                "  3. Run the render from an unblocked network.".format(status)
+            )
+        return f"Pixabay music search failed: {exc}"
 
     def _build_opener(self) -> urllib.request.OpenerDirector:
         """Build a URL opener with cookie support for session persistence."""
@@ -285,16 +310,47 @@ class PixabayMusic(BaseTool):
 
             user = item.get("user", {}) or {}
             tracks.append({
-                "title": item.get("name") or sources.get("filename", "Unknown"),
+                # Pixabay omits `name` on a large share of tracks; without the
+                # filename/CDN fallback every such track was reported as
+                # "Unknown", which made selection and provenance useless.
+                "title": self._track_title(item, sources, audio_url),
                 "audio_url": audio_url,
                 "duration": item.get("duration"),
-                "artist": user.get("username", "Unknown"),
+                "artist": user.get("username") or "Unknown",
+                "language": item.get("language") or item.get("lang"),
                 "rating": item.get("rating"),
                 "download_count": item.get("downloadCount"),
                 "pixabay_id": item.get("id"),
             })
 
         return tracks
+
+    @staticmethod
+    def _track_title(item: dict, sources: dict, audio_url: str) -> str:
+        """Best-effort human-readable track title.
+
+        Order: explicit `name` -> source filename -> CDN URL basename ->
+        'Unknown'. Filenames are de-slugged (extension and trailing numeric
+        id stripped) so `cinematic-documentary-146983.mp3` becomes
+        `Cinematic Documentary`.
+        """
+        raw = (
+            item.get("name")
+            or sources.get("filename")
+            or urllib.parse.urlparse(audio_url).path.rsplit("/", 1)[-1]
+            or ""
+        ).strip()
+        if not raw:
+            return "Unknown"
+
+        if raw.lower().endswith((".mp3", ".wav", ".ogg", ".m4a")):
+            raw = raw.rsplit(".", 1)[0]
+        # Pixabay filenames end with a (variable width) numeric asset id.
+        raw = re.sub(r"[-_]\d+$", "", raw)
+        raw = raw.replace("-", " ").replace("_", " ").strip()
+        if not raw:
+            return "Unknown"
+        return raw if raw != raw.lower() else raw.title()
 
     def _parse_tracks_html(self, html: str) -> list[dict]:
         """Fallback: extract track info from HTML when bootstrap fails.
