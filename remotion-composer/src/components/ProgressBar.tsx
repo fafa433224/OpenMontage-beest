@@ -15,6 +15,9 @@ interface ProgressSegment {
 }
 
 interface ProgressBarProps {
+  /** Target fill: 0-100 percent, or a 0-1 fraction (auto-normalised).
+   *  Callers in the edit-decisions world pass fractions (0.4 for 40%),
+   *  so any value <= 1 is treated as a fraction and scaled to percent. */
   progress: number;
   label?: string;
   color?: string;
@@ -29,6 +32,12 @@ interface ProgressBarProps {
   textColor?: string;
   labelFontSize?: number;
   percentageFontSize?: number;
+  /** Frame window for the fill animation. When the bar is embedded in a
+   *  Remotion <Sequence> (e.g. an Explainer cut), pass the cut's own frame
+   * duration — useVideoConfig().durationInFrames there still reports the
+   * WHOLE composition, which stretches the fill over the entire video and
+   * leaves the bar visibly stuck near zero inside a short cut. */
+  animationDurationFrames?: number;
 }
 
 export const ProgressBar: React.FC<ProgressBarProps> = ({
@@ -46,11 +55,23 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   textColor = "#1F2937",
   labelFontSize = 36,
   percentageFontSize = 28,
+  animationDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
-  const clampedProgress = Math.max(0, Math.min(100, progress));
+  // Normalise the two calling conventions onto one 0-100 percent scale.
+  // A value <= 1 means "fraction of the whole" (0.4 -> 40%); values above 1
+  // are already percent. A deliberate 1% bar is effectively never wanted,
+  // while fraction props are the norm in the pipeline's cut payloads.
+  const normalizedProgress = progress <= 1 ? progress * 100 : progress;
+  const clampedProgress = Math.max(0, Math.min(100, normalizedProgress));
+
+  // The fill animation must play out within this bar's own on-screen window.
+  // Embedded in a Sequence, useVideoConfig().durationInFrames is the whole
+  // composition — pass animationDurationFrames (the cut's frame length) so a
+  // 20-second progress cut actually fills its bar instead of creeping.
+  const animationFrames = animationDurationFrames ?? durationInFrames;
 
   // Container entrance animation
   const containerOpacity = spring({
@@ -72,21 +93,21 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   if (animationStyle === "fill") {
     fillFraction = interpolate(
       frame,
-      [10, Math.max(30, durationInFrames * 0.5)],
+      [10, Math.max(30, animationFrames * 0.5)],
       [0, clampedProgress / 100],
       { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
   } else if (animationStyle === "pulse") {
     const base = interpolate(
       frame,
-      [10, Math.max(30, durationInFrames * 0.4)],
+      [10, Math.max(30, animationFrames * 0.4)],
       [0, clampedProgress / 100],
       { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
     // Subtle pulse once fill completes
     const pulsePhase = interpolate(
       frame,
-      [durationInFrames * 0.4, durationInFrames * 0.9],
+      [animationFrames * 0.4, animationFrames * 0.9],
       [0, Math.PI * 4],
       { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
@@ -100,7 +121,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
     const stepCount = segments ? segments.length : 5;
     const rawProgress = interpolate(
       frame,
-      [10, Math.max(30, durationInFrames * 0.6)],
+      [10, Math.max(30, animationFrames * 0.6)],
       [0, clampedProgress / 100],
       { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
