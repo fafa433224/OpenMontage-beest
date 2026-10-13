@@ -1,0 +1,190 @@
+name: storyline-edit
+version: "1.0"
+description: >
+  Footage-first storyline editing pipeline, ported from FireRed-OpenStoryline's
+  director chain (Apache-2.0; see docs/FIRERED_MERGE.md). Takes existing media
+  (user footage, photos, searched stock), splits it into shots, understands and
+  groups the clips into a narrative storyline, writes the script from those
+  groups, fits the timeline to narration and BGM beats, and renders with the
+  locked OpenMontage runtime. Use when the user brings footage to edit, NOT
+  for fully generated videos (use cinematic / animated-explainer instead).
+category: custom
+stability: beta
+default_checkpoint_policy: guided
+
+orchestration:
+  mode: executive-producer
+  skill: pipelines/storyline-edit/executive-producer
+  budget_default_usd: 1.00
+  max_revisions_per_stage: 3
+  max_send_backs: 2
+  max_wall_time_minutes: 45
+
+extensions:
+  custom_scripts: true
+  custom_playbooks: true
+  custom_skills: true
+  custom_tools: false
+
+required_skills:
+  - pipelines/storyline-edit/executive-producer
+  - pipelines/storyline-edit/idea-director
+  - pipelines/storyline-edit/script-director
+  - pipelines/storyline-edit/scene-director
+  - pipelines/storyline-edit/asset-director
+  - pipelines/storyline-edit/edit-director
+  - pipelines/storyline-edit/compose-director
+  - pipelines/storyline-edit/publish-director
+  - core/firered-storyline
+  - meta/reviewer
+  - meta/checkpoint-protocol
+  - meta/animation-runtime-selector
+
+compatible_playbooks:
+  recommended:
+    - clean-professional
+    - flat-motion-graphics
+  also_works:
+    - premium-minimalist
+  custom_allowed: true
+
+stages:
+  - name: idea
+    skill: pipelines/storyline-edit/idea-director
+    produces:
+      - brief
+    tools_available:
+      - video_analyzer
+      - video_understand
+      - scene_detect
+      - transcriber
+      - speech_rough_cut
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Every source clip is inventoried with a caption and duration
+      - Speech footage is rough-cut (filler/repeats/agent-marked cuts) before grouping
+      - Clips are assigned to narrative groups (hook/setup/development/climax/close)
+      - Both render runtimes are presented when both are available, and render_runtime is locked with a logged decision
+    success_criteria:
+      - Schema-valid brief artifact
+      - Clip inventory covers 100% of source media
+      - Group assignment covers 100% of kept clips
+
+  - name: script
+    skill: pipelines/storyline-edit/script-director
+    required_artifacts_in:
+      - brief
+    produces:
+      - script
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - One script block per narrative group, written from that group's clips
+      - Script describes footage that actually exists in the group
+      - Voice, tone, and target duration are declared per group
+    success_criteria:
+      - Schema-valid script artifact
+      - Every group has a script block (or an explicit no-narration note)
+
+  - name: scene_plan
+    skill: pipelines/storyline-edit/scene-director
+    required_artifacts_in:
+      - brief
+      - script
+    produces:
+      - scene_plan
+    tools_available:
+      - storyline_timeline
+    checkpoint_required: true
+    human_approval_default: false
+    review_focus:
+      - Clip order inside each group serves the group's script block
+      - Hero clips are identified and given longer holds
+    success_criteria:
+      - Schema-valid scene_plan artifact
+      - Every grouped clip appears exactly once in the plan
+
+  - name: assets
+    skill: pipelines/storyline-edit/asset-director
+    required_artifacts_in:
+      - script
+      - scene_plan
+    produces:
+      - asset_manifest
+    tools_available:
+      - tts_selector
+      - music_library
+      - pixabay_music
+      - suno_music
+      - bgm_beat_sync
+      - ai_transition_plan
+      - video_selector
+    checkpoint_required: true
+    human_approval_default: false
+    review_focus:
+      - Narration is generated per group so group durations are real, not guessed
+      - One BGM track is chosen and beat-analyzed (bgm_beat_sync) before edit
+      - AI transitions are planned only if the delivery promise justifies the cost; generate one and review before batching
+    success_criteria:
+      - Schema-valid asset_manifest artifact
+      - Narration durations recorded per group (or explicit no-narration note)
+      - BGM beats recorded when a BGM track is used
+
+  - name: edit
+    skill: pipelines/storyline-edit/edit-director
+    required_artifacts_in:
+      - scene_plan
+      - asset_manifest
+    produces:
+      - edit_decisions
+    tools_available:
+      - storyline_timeline
+      - bgm_beat_sync
+      - subtitle_gen
+    checkpoint_required: true
+    human_approval_default: false
+    review_focus:
+      - edit_decisions is produced by storyline_timeline, never hand-computed
+      - render_runtime in edit_decisions matches the locked proposal decision; a silent swap is a CRITICAL violation
+      - Beat snapping, when applied, is declared in the decision log
+    success_criteria:
+      - Schema-valid edit_decisions artifact (version 1.0)
+      - Total duration matches narration/BGM intent within 10%
+
+  - name: compose
+    skill: pipelines/storyline-edit/compose-director
+    required_artifacts_in:
+      - edit_decisions
+    produces:
+      - render_report
+    tools_available:
+      - video_compose
+      - hyperframes_compose
+      - audio_mixer
+    checkpoint_required: true
+    human_approval_default: false
+    review_focus:
+      - Render uses the locked runtime; if it is unavailable, escalate instead of silently swapping
+      - Final watch-through confirms cuts land as planned (and on beats, if snapped)
+    success_criteria:
+      - Schema-valid render_report artifact
+      - Output MP4 exists and plays end to end
+
+  - name: publish
+    skill: pipelines/storyline-edit/publish-director
+    required_artifacts_in:
+      - render_report
+    produces:
+      - publish_log
+    tools_available:
+      - export_bundle
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Export profile matches the target platform (aspect, captions, loudness)
+      - The working pattern is saved as a reusable style skill when the edit succeeded
+    success_criteria:
+      - Schema-valid publish_log artifact
+      - Exported file paths recorded
