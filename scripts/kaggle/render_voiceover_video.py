@@ -88,22 +88,32 @@ def synth_assets(composer: Path, skip: bool) -> None:
 
 def render_hyperframes(work: Path, template: str, sfx_names: list, out_mp4: Path,
                        gsap_src: Path, audio_src: Path) -> None:
-    """Materialize a HyperFrames workspace from a repo template and render it."""
+    """Materialize a HyperFrames workspace from a repo template and render it.
+
+    The CLI can hang in teardown AFTER writing a complete output file
+    (observed locally: file complete at ~40s, process still alive at 9min).
+    So we run it under `timeout`, then judge success by probing the OUTPUT
+    FILE's duration — the only ground truth that matters.
+    """
     ws = work / f"hf-{template}"
     (ws / "assets").mkdir(parents=True, exist_ok=True)
     shutil.copy(HYPERFRAMES_TEMPLATES / template / "index.html", ws / "index.html")
     shutil.copy(gsap_src, ws / "assets" / "gsap.min.js")
     for name in sfx_names:
         shutil.copy(audio_src / name, ws / "assets" / name)
-    sh(f"npx --yes hyperframes render '{ws}' -o '{out_mp4}' --fps 30 --quality standard "
-       f"--browser-timeout 120", cwd=work)
+    expected = {"intro": 5.4, "outro": 4.8}[template]
+    cmd = (f"cd '{ws}' && timeout 420 npx --yes hyperframes render . -o '{out_mp4}' "
+           f"--fps 30 --quality standard --browser-timeout 120 > render.log 2>&1; "
+           f"echo hyperframes_exit=$?")
+    subprocess.run(cmd, shell=True, cwd=work)  # rc handled by the file probe below
+    log_tail = (ws / "render.log").read_text(errors="replace")[-1500:] if (ws / "render.log").exists() else ""
     if not out_mp4.exists():
-        raise SystemExit(f"hyperframes render produced no output for {template}")
-    # Hard timeout guard: the CLI can hang in teardown after a successful
-    # render; verify the file is complete instead of trusting exit codes.
+        raise SystemExit(f"hyperframes render produced no output for {template}:\n{log_tail}")
     d = duration(out_mp4)
-    if d < 1.0:
-        raise SystemExit(f"hyperframes render for {template} too short: {d}s")
+    if abs(d - expected) > 0.35:
+        raise SystemExit(f"hyperframes render for {template} has bad duration {d}s "
+                         f"(expected {expected}s):\n{log_tail}")
+    print(f"hyperframes {template}: {d:.2f}s OK (log tail: {log_tail[-300:]})", flush=True)
 
 
 def concat_videos(parts: list, out: Path) -> None:
