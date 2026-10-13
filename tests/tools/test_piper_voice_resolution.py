@@ -54,7 +54,9 @@ def test_execute_downloads_voice_on_first_use(monkeypatch, tmp_path):
     monkeypatch.setattr(PiperTTS, "get_status", lambda self: "available")
 
     def fake_run(cmd, **kwargs):
-        if cmd[0] == "piper":
+        # cmd[0] is whatever _piper_runner() resolved (absolute path when piper
+        # lives next to the interpreter) — match on the executable name.
+        if Path(cmd[0]).name in ("piper", "piper.exe"):
             Path(cmd[cmd.index("--output_file") + 1]).write_bytes(b"RIFF")
             return subprocess.CompletedProcess(cmd, 0, "", "")
         _write_voice(voice_dir)

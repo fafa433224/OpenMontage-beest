@@ -100,9 +100,43 @@ class PiperTTS(BaseTool):
     user_visible_verification = ["Listen to generated audio for intelligibility"]
 
     def get_status(self) -> ToolStatus:
-        if shutil.which("piper"):
+        if self._piper_runner() is not None:
             return ToolStatus.AVAILABLE
         return ToolStatus.UNAVAILABLE
+
+    @staticmethod
+    def _piper_runner() -> list[str] | None:
+        """Command prefix that runs Piper, or None when it is unavailable.
+
+        `shutil.which("piper")` alone is not enough: `piper-tts` installs the
+        executable into the *interpreter's* environment (venv/conda bin), and
+        PATH does not necessarily contain it — e.g. an agent shell that calls
+        the venv's python directly without activating it, which is how the
+        repo's own tooling is invoked. That made a correctly installed Piper
+        report UNAVAILABLE. Resolution order:
+
+          1. `piper` on PATH
+          2. `piper` next to the running interpreter (venv/conda bin dir)
+          3. the `piper` Python module via `python -m piper`
+        """
+        exe = shutil.which("piper")
+        if exe:
+            return [exe]
+
+        candidates = [Path(sys.executable).parent / ("piper.exe" if os.name == "nt" else "piper")]
+        for cand in candidates:
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return [str(cand)]
+
+        try:
+            import importlib.util
+
+            if importlib.util.find_spec("piper") is not None:
+                return [sys.executable, "-m", "piper"]
+        except (ImportError, ValueError):
+            pass
+
+        return None
 
     def estimate_cost(self, inputs: dict[str, Any]) -> float:
         return 0.0
@@ -233,8 +267,12 @@ class PiperTTS(BaseTool):
 
         model_name = inputs.get("model") or self._DEFAULT_MODEL
 
+        runner = self._piper_runner()
+        if runner is None:
+            return ToolResult(success=False, error="Piper TTS not available. " + self.install_instructions)
+
         cmd = [
-            "piper",
+            *runner,
             "--model", str(model_path),
             "--length-scale", str(inputs.get("length_scale", 1.0)),
             "--sentence-silence", str(inputs.get("sentence_silence", 0.3)),
