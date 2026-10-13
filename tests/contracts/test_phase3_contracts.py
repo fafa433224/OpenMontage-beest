@@ -133,6 +133,9 @@ class TestPiperTTS:
 
         monkeypatch.setattr(shutil, "which", lambda cmd: None if cmd == "piper" else original_which(cmd))
         monkeypatch.setattr(builtins, "__import__", fake_import)
+        # Also hide the interpreter-local piper executable (venv bin dir), so the
+        # test holds even when piper-tts is installed next to sys.executable.
+        monkeypatch.setattr(PiperTTS, "_piper_runner", staticmethod(lambda: None))
 
         assert PiperTTS().get_status() == ToolStatus.UNAVAILABLE
 
