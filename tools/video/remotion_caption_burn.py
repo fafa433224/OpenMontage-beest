@@ -31,9 +31,11 @@ React scene stack in ``remotion-composer/``.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -153,6 +155,45 @@ class RemotionCaptionBurn(BaseTool):
     # ------------------------------------------------------------------ #
     #  Remotion detection
     # ------------------------------------------------------------------ #
+
+    def _ensure_remotion_browser(self, composer_dir: Path) -> None:
+        """Best-effort `npx remotion browser ensure` before rendering.
+
+        Mirrors ``video_compose._ensure_remotion_browser``: serialises the
+        first-time headless-browser download under a lock so concurrent
+        Remotion renders cannot race each other's unpack of the shared
+        chrome-headless-shell zip. Any failure is logged and swallowed —
+        the render that follows will surface a real error if the browser
+        is genuinely unavailable.
+        """
+        cache_dir = composer_dir / "node_modules" / ".remotion"
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        lock_path = cache_dir / "browser-ensure.lock"
+        try:
+            with open(lock_path, "w") as lock_handle:
+                try:
+                    import fcntl
+                    fcntl.flock(lock_handle, fcntl.LOCK_EX)
+                except (ImportError, OSError):
+                    pass
+                self.run_command(
+                    ["npx", "remotion", "browser", "ensure"],
+                    timeout=900,
+                    cwd=str(composer_dir),
+                )
+        except subprocess.CalledProcessError as e:
+            detail = (getattr(e, "detail", None) or e.stderr or e.stdout or "")
+            logging.getLogger(__name__).warning(
+                "remotion browser ensure failed (exit %s); continuing: %s",
+                e.returncode, str(detail)[-400:],
+            )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            logging.getLogger(__name__).warning(
+                "remotion browser ensure did not complete (%s); continuing", e
+            )
 
     def _find_remotion_root(self) -> Path | None:
         """Find the remotion-composer directory relative to the repo."""
@@ -327,6 +368,10 @@ class RemotionCaptionBurn(BaseTool):
         # Render (use npx.cmd on Windows for subprocess compatibility)
         import sys
         npx_bin = "npx.cmd" if sys.platform == "win32" else "npx"
+        # Pre-download the headless browser under a lock so a cold cache
+        # cannot race a parallel render (ENOENT unlink of the shared zip —
+        # see video_compose._ensure_remotion_browser for the full story).
+        self._ensure_remotion_browser(root)
         render_cmd = [
             npx_bin, "remotion", "render",
             "TalkingHead",
