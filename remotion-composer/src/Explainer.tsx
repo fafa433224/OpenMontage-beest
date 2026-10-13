@@ -127,11 +127,17 @@ const AnimatedBackground: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
 
   return (
     <AbsoluteFill style={{ background: gradient }}>
-      {/* Floating glow orbs */}
+      {/* Floating glow orbs.
+          Rendered as radial gradients rather than `filter: blur()` on solid
+          circles: at 6-8% opacity the two are visually indistinguishable, but
+          a Gaussian blur pass per orb per frame is one of the most expensive
+          rasterization steps in headless-Chromium frame rendering. This keeps
+          the same soft-glow look at a fraction of the render cost. */}
       {orbs.map((orb, i) => {
         const ox = orb.x + Math.sin(frame / (fps * orb.speedX)) * 15;
         const oy = orb.y + Math.cos(frame / (fps * orb.speedY)) * 12;
         const { r, g, b } = hexToRgb(orb.color);
+        const glowSize = Math.round(orb.size * 2.2);
         return (
           <div
             key={i}
@@ -139,13 +145,11 @@ const AnimatedBackground: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
               position: "absolute",
               left: `${ox}%`,
               top: `${oy}%`,
-              width: orb.size,
-              height: orb.size,
+              width: glowSize,
+              height: glowSize,
               borderRadius: "50%",
-              background: `rgba(${r}, ${g}, ${b}, ${orbOpacity})`,
-              filter: `blur(${orb.size * 0.4}px)`,
+              background: `radial-gradient(circle, rgba(${r}, ${g}, ${b}, ${orbOpacity}) 0%, rgba(${r}, ${g}, ${b}, ${orbOpacity * 0.45}) 22%, rgba(${r}, ${g}, ${b}, 0) 46%)`,
               transform: "translate(-50%, -50%)",
-              willChange: "transform",
             }}
           />
         );
