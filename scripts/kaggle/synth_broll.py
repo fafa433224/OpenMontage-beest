@@ -164,13 +164,21 @@ def frames_particles(pal, n, seed=44):
         for _ in range(60)
     ]
     from PIL import ImageDraw
+    # Soft base glow (radial falloff — a hard ellipse edge would read as a
+    # raw generated asset once footage is dimmed under a scrim).
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     for f in range(n):
         t = f / FPS
         img = Image.new("RGB", (W, H), pal["deep"])
+        # base glow as soft radial gradient
+        gx, gy, gr = W * 0.58, H * 0.62, W * 0.42
+        d2 = ((xx - gx) ** 2 + (yy - gy) ** 2) / (gr * gr)
+        glow = np.exp(-d2 * 2.0)
+        base = np.array(pal["deep"], dtype=np.float32)
+        tint = np.array(_lerp_rgb(pal["deep"], pal["a"], 0.35), dtype=np.float32)
+        img_arr = base[None, None, :] + glow[..., None] * (tint - base)[None, None, :] * 0.8
+        img = Image.fromarray(np.clip(img_arr, 0, 255).astype(np.uint8))
         draw = ImageDraw.Draw(img, "RGBA")
-        # subtle base glow so it's not flat
-        draw.ellipse([W * 0.25, H * 0.2, W * 0.85, H * 0.95],
-                     fill=(*_lerp_rgb(pal["deep"], pal["a"], 0.16), 255))
         for m in sorted(motes, key=lambda m: m["depth"]):
             x = (m["x"] + m["vx"] * t + 6 * np.sin(t * 0.7 + m["ph"])) % (W + 20) - 10
             y = (m["y"] + m["vy"] * t) % (H + 20) - 10
