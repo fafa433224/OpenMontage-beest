@@ -214,6 +214,25 @@ def test_install_instructions_reference_correct_npm_package_name():
     )
 
 
+def _skip_when_local_floor_unmet(rc):
+    """Skip when the local runtime floor (node >= the tool's floor major,
+    ffmpeg, npx) is not met — e.g. Kaggle images ship Node 20 while the
+    tool requires 22. These tests pin the npm/CLI probe logic (mocked),
+    not the node floor, and `_runtime_check` deliberately short-circuits
+    the probes when the floor fails, so a below-floor machine cannot
+    exercise them at all."""
+    if (
+        rc["node_major"] is None
+        or rc["node_major"] < HyperFramesCompose._NODE_FLOOR_MAJOR
+        or not rc["ffmpeg_available"]
+        or not rc["npx_available"]
+    ):
+        pytest.skip(
+            f"Local runtime floor not met on this machine "
+            f"(node {rc['node_major']}, needs >= {HyperFramesCompose._NODE_FLOOR_MAJOR})"
+        )
+
+
 def test_runtime_check_fails_when_npm_package_unresolvable(monkeypatch):
     """Regression: `_runtime_check()` previously returned runtime_available=True
     based only on local binaries (node/ffmpeg/npx). That meant the tool lied
@@ -229,6 +248,7 @@ def test_runtime_check_fails_when_npm_package_unresolvable(monkeypatch):
         classmethod(lambda cls: {"error": "npm package `hyperframes` not found (404)"}),
     )
     rc = HyperFramesCompose()._runtime_check()
+    _skip_when_local_floor_unmet(rc)
     assert rc["runtime_available"] is False, (
         "Runtime must report NOT available when the npm package can't be "
         "resolved — even if node/ffmpeg/npx are all on PATH."
@@ -257,8 +277,7 @@ def test_runtime_check_succeeds_when_npm_resolves(monkeypatch):
     )
     rc = HyperFramesCompose()._runtime_check()
     # Local binaries must still pass for this to go green.
-    if rc["node_major"] is None or not rc["ffmpeg_available"] or not rc["npx_available"]:
-        pytest.skip("Local runtime floor not met on this machine")
+    _skip_when_local_floor_unmet(rc)
     assert rc["runtime_available"] is True
     assert rc["npm_package_version"] == "0.4.5"
     assert rc["reasons"] == []
@@ -282,8 +301,7 @@ def test_runtime_check_fails_when_published_cli_crashes(monkeypatch):
 
     rc = HyperFramesCompose()._runtime_check()
 
-    if rc["node_major"] is None or not rc["ffmpeg_available"] or not rc["npx_available"]:
-        pytest.skip("Local runtime floor not met on this machine")
+    _skip_when_local_floor_unmet(rc)
     assert rc["runtime_available"] is False
     assert rc["cli_probe_error"] is not None
     assert any("not executable" in reason for reason in rc["reasons"])

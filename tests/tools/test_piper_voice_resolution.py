@@ -11,9 +11,24 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tools.audio.piper_tts import PiperTTS
 
 VOICE = "en_US-lessac-medium"
+
+
+@pytest.fixture(autouse=True)
+def _fake_piper_runner(monkeypatch):
+    """Make the suite hermetic on machines without piper-tts installed.
+
+    ``PiperTTS._piper_runner()`` resolves the real executable (PATH, the
+    interpreter's bin dir, then ``python -m piper``); on a clean CI box or
+    Kaggle container none of those exist and ``_generate`` would correctly
+    refuse. The tests here pin voice-resolution/speaker-flag logic with
+    ``subprocess.run`` mocked, so a stable runner prefix is all they need.
+    """
+    monkeypatch.setattr(PiperTTS, "_piper_runner", staticmethod(lambda: ["piper"]))
 
 
 def _write_voice(directory: Path, name: str = VOICE, num_speakers: int = 1) -> Path:

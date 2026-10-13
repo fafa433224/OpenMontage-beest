@@ -82,6 +82,10 @@ def test_remotion_render_adapts_cuts_and_stages_local_video(monkeypatch, tmp_pat
     captured = {}
 
     def fake_run_command(self, command, **kwargs):
+        # Skip the `npx remotion browser ensure` pre-warm call — it carries
+        # no --props and must not disturb render-command capture.
+        if not any(arg.startswith("--props=") for arg in command):
+            return
         captured["command"] = command
         captured["timeout"] = kwargs["timeout"]
         props_arg = next(arg for arg in command if arg.startswith("--props="))
@@ -152,6 +156,10 @@ def test_remotion_render_preserves_direct_cinematic_scenes(monkeypatch, tmp_path
     captured = {}
 
     def fake_run_command(self, command, **kwargs):
+        # Skip the `npx remotion browser ensure` pre-warm call — it carries
+        # no --props and must not disturb render-command capture.
+        if not any(arg.startswith("--props=") for arg in command):
+            return
         props_arg = next(arg for arg in command if arg.startswith("--props="))
         captured["props"] = json.loads(Path(props_arg.split("=", 1)[1]).read_text())
         output.write_bytes(b"rendered")

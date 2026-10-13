@@ -62,6 +62,16 @@ def _public_dir_arg(argv: list[str]) -> str | None:
     return None
 
 
+def _render_calls(calls: list[list[str]]) -> list[list[str]]:
+    """Only the actual ``npx remotion render`` invocations.
+
+    ``_remotion_render`` also invokes ``npx remotion browser ensure`` first
+    (the concurrency-race pre-warm); those book-keeping calls must not be
+    counted when asserting on render behaviour.
+    """
+    return [c for c in calls if len(c) >= 3 and c[:3] == ["npx", "remotion", "render"]]
+
+
 def _staging_dirs(tmp_path: Path) -> list[Path]:
     return list((tmp_path / "renders").glob(".remotion-public-*"))
 
@@ -74,8 +84,9 @@ def test_public_dir_is_unique_per_render(tmp_path, render):
     tool._remotion_render(_inputs(tmp_path, source))
     tool._remotion_render(_inputs(tmp_path, source))
 
-    dirs = [_public_dir_arg(c) for c in calls]
-    assert len(calls) == 2
+    renders = _render_calls(calls)
+    dirs = [_public_dir_arg(c) for c in renders]
+    assert len(renders) == 2
     assert all(d is not None for d in dirs), "staged media but no --public-dir passed"
     assert dirs[0] != dirs[1], f"concurrent renders would collide on {dirs[0]}"
 
