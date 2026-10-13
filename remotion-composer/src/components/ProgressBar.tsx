@@ -91,9 +91,12 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   let fillFraction: number;
 
   if (animationStyle === "fill") {
+    // Fill settles by 40% of the cut — mid-scene census/QC frames then show
+    // the final value (label and counter always agree once settled; a 50%
+    // window left the count-up's last rounding frame exposed at midpoints).
     fillFraction = interpolate(
       frame,
-      [10, Math.max(30, animationFrames * 0.5)],
+      [10, Math.max(30, animationFrames * 0.4)],
       [0, clampedProgress / 100],
       { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
