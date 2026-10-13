@@ -15,6 +15,24 @@ interface Metric {
   icon?: string; // emoji or text glyph
 }
 
+/** Pick a label color that stays readable on the given card background.
+ *
+ *  KPI cards default to a light surface (#F9FAFB) while the surrounding
+ *  Explainer theme may be dark (light textColor). Using the theme textColor
+ *  for the label made it near-invisible on the light card — labels simply
+ *  disappeared in rendered output while the accent-colored values stayed
+ *  visible. Contrast is computed against the CARD, not the page.
+ */
+function readableOn(bg: string): string {
+  const clean = (bg || "").replace("#", "");
+  if (clean.length !== 6) return "#1F2937";
+  const r = parseInt(clean.slice(0, 2), 16) / 255;
+  const g = parseInt(clean.slice(2, 4), 16) / 255;
+  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum > 0.45 ? "#1F2937" : "#F8FAFC";
+}
+
 type KPIAnimationStyle = "count-up" | "pop" | "cascade";
 
 interface KPIGridProps {
@@ -175,6 +193,7 @@ export const KPIGrid: React.FC<KPIGridProps> = ({
                 metric={metric}
                 accentColor={accentColor}
                 textColor={textColor}
+                labelColor={readableOn(cardBackgroundColor)}
                 fontFamily={fontFamily}
                 positiveColor={positiveColor}
                 negativeColor={negativeColor}
@@ -221,6 +240,7 @@ export const KPIGrid: React.FC<KPIGridProps> = ({
               metric={metric}
               accentColor={accentColor}
               textColor={textColor}
+              labelColor={readableOn(cardBackgroundColor)}
               fontFamily={fontFamily}
               positiveColor={positiveColor}
               negativeColor={negativeColor}
@@ -240,6 +260,7 @@ interface KPICardContentProps {
   metric: Metric;
   accentColor: string;
   textColor: string;
+  labelColor: string;
   fontFamily: string;
   positiveColor: string;
   negativeColor: string;
@@ -253,6 +274,7 @@ const KPICardContent: React.FC<KPICardContentProps> = ({
   metric,
   accentColor,
   textColor,
+  labelColor,
   fontFamily,
   positiveColor,
   negativeColor,
@@ -320,10 +342,13 @@ const KPICardContent: React.FC<KPICardContentProps> = ({
         style={{
           fontSize: 22,
           fontWeight: 500,
-          color: textColor,
+          color: labelColor,
           fontFamily,
           marginTop: 8,
-          opacity: 0.8,
+          opacity: 0.9,
+          textAlign: "center",
+          width: "100%",
+          overflowWrap: "break-word",
         }}
       >
         {metric.label}
