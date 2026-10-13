@@ -8,7 +8,9 @@ diagrams via Pillow as fallback.
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -111,6 +113,34 @@ class DiagramGen(BaseTool):
     def _has_mermaid(self) -> bool:
         return shutil.which("mmdc") is not None
 
+    def _mmdc_width_flag(self) -> str | None:
+        """Return the flag the installed mermaid-cli uses to cap width.
+
+        mermaid-cli changed its CLI across versions: older builds accept
+        ``-w/--width <px>``, newer builds only accept ``--size <px>`` (max
+        dimension). Passing an unsupported flag makes mmdc exit 1 with
+        "unknown option", which used to fail every mermaid render on
+        systems with a recent @mermaid-js/mermaid-cli. Probe --help once
+        and adapt; return None when neither flag exists (width unenforced).
+        """
+        cached = getattr(self, "_width_flag", None)
+        if cached is not None:
+            return cached or None
+        flag = ""
+        try:
+            proc = subprocess.run(
+                ["mmdc", "--help"], capture_output=True, text=True, timeout=15
+            )
+            help_text = proc.stdout + proc.stderr
+            if re.search(r"(^|\s)-w,\s*--width", help_text):
+                flag = "-w"
+            elif "--size" in help_text:
+                flag = "--size"
+        except (OSError, subprocess.SubprocessError):
+            flag = ""
+        self._width_flag = flag
+        return flag or None
+
     def _has_pillow(self) -> bool:
         try:
             from PIL import Image  # noqa: F401
@@ -153,14 +183,19 @@ class DiagramGen(BaseTool):
             config_path = output_path.with_suffix(".mermaid.json")
             config_path.write_text(json.dumps(mermaid_config), encoding="utf-8")
 
+            width = inputs.get("width", 1200)
             cmd = [
                 "mmdc",
                 "-i", str(temp_mmd),
                 "-o", str(output_path),
                 "-c", str(config_path),
                 "-b", "transparent",
-                "-w", str(inputs.get("width", 1200)),
             ]
+            # -w vs --size differs across mermaid-cli versions; only pass the
+            # flag this install actually understands.
+            width_flag = self._mmdc_width_flag()
+            if width_flag and width:
+                cmd += [width_flag, str(width)]
 
             try:
                 self.run_command(cmd, timeout=30)

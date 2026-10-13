@@ -6,6 +6,7 @@ highlighting and Pillow for rendering. No external services required.
 
 from __future__ import annotations
 
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,84 @@ from tools.base_tool import (
     ToolStatus,
     ToolTier,
 )
+
+
+# Monospace families tried in order when the Pygments ImageFormatter needs a
+# font. Pygments' default ("DejaVu Sans Mono") only exists on systems that
+# ship the DejaVu fonts; minimal containers (Kaggle, slim Docker images,
+# fresh CI runners) often do not have it, which used to make every render
+# raise FontNotFound instead of falling back to whatever mono font exists.
+_MONOSPACE_CANDIDATES = [
+    "DejaVu Sans Mono",
+    "JetBrains Mono",
+    "Liberation Mono",
+    "Noto Sans Mono",
+    "Roboto Mono",
+    "Ubuntu Mono",
+    "Courier New",
+    "Courier",
+    "FreeMono",
+]
+
+
+def _fc_family_exists(family: str) -> bool:
+    """True if fontconfig can resolve ``family`` — the exact mechanism
+    Pygments' FontManager uses on POSIX (``fc-list "Family:style=Regular"
+    file``), so a True here guarantees Pygments will find the font too."""
+    try:
+        proc = subprocess.run(
+            ["fc-list", f"{family}:style=Regular", "file"],
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    for line in proc.stdout.splitlines():
+        if line.startswith(b"Fontconfig warning:"):
+            continue
+        if line.strip().strip(b":"):
+            return True
+    return False
+
+
+def _resolve_monospace_family() -> str:
+    """Return the first monospace family fontconfig can actually resolve.
+
+    Falls back to fontconfig's own ``monospace`` alias, then to the Pygments
+    default (which reproduces the historical behaviour on font-rich systems).
+    Result is cached: fontconfig lookups are subprocess calls and this runs
+    once per process.
+    """
+    resolved = getattr(_resolve_monospace_family, "_cached", None)
+    if resolved is not None:
+        return resolved
+
+    for family in _MONOSPACE_CANDIDATES:
+        if _fc_family_exists(family):
+            _resolve_monospace_family._cached = family  # type: ignore[attr-defined]
+            return family
+
+    # Ask fontconfig for its preferred monospace alias (works even when the
+    # family name differs from our candidate list).
+    try:
+        proc = subprocess.run(
+            ["fc-match", "-f", "%{family}", "monospace"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            family = proc.stdout.strip().split(",")[0].strip()
+            if family:
+                _resolve_monospace_family._cached = family  # type: ignore[attr-defined]
+                return family
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    _resolve_monospace_family._cached = "DejaVu Sans Mono"  # type: ignore[attr-defined]
+    return "DejaVu Sans Mono"
 
 
 # Theme presets mapping to Pygments styles and background colors
@@ -95,6 +174,11 @@ class CodeSnippet(BaseTool):
                 "default": "monokai",
             },
             "font_size": {"type": "integer", "default": 20},
+            "font": {
+                "type": "string",
+                "default": None,
+                "description": "Monospace font family override; auto-detected when omitted",
+            },
             "padding": {"type": "integer", "default": 40},
             "border_radius": {"type": "integer", "default": 12},
             "line_numbers": {"type": "boolean", "default": True},
@@ -149,10 +233,13 @@ class CodeSnippet(BaseTool):
         except Exception:
             lexer = guess_lexer(code)
 
-        # Use Pygments ImageFormatter for rendering
+        # Use Pygments ImageFormatter for rendering. font_name is resolved
+        # against the fonts actually installed on this system so minimal
+        # containers (Kaggle, slim images) do not hit FontNotFound.
         formatter = ImageFormatter(
             style=theme["pygments_style"],
             font_size=font_size,
+            font_name=inputs.get("font") or _resolve_monospace_family(),
             line_numbers=line_numbers,
             image_pad=padding,
             line_number_bg=theme["bg_color"],
