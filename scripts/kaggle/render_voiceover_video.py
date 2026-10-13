@@ -1,24 +1,30 @@
-"""End-to-end: voiceover (input) -> GPU transcription -> props -> Remotion render -> QC.
+"""End-to-end: voiceover (input) -> GPU transcription -> props -> Remotion
+body render + HyperFrames intro/outro -> ONE final video -> QC.
 
 The Kaggle production path for the OpenMontage Explainer. Proven on a
-T4x2 instance: 712s 1080p30 video, GPU (CUDA) transcription, Remotion
-render. This version adds:
+T4x2 instance. This version adds the full creative pipeline:
 
-  * ``--concurrency`` passthrough to Remotion (4 tabs renders ~1.5x faster
-    on the 4-vCPU Kaggle box than the default 2)
-  * progress-bar frame QC — extracts frames at each progress_bar cut's
-    midpoint so a reviewer (or a VLM) can verify the bar and the counter
-    agree with the label. This is the exact check that caught the
-    fraction-vs-percent bug fixed in ProgressBar.tsx.
+  * procedural asset synthesis (SFX + ambient BGM via synth_audio.py,
+    stock-footage b-roll clips via synth_broll.py) — zero API keys,
+  * motion-design v2 props (per-scene backgrounds, transitions, camera,
+    sweeps, keyword highlights) via build_explainer_props.py,
+  * HyperFrames-rendered kinetic intro + outro (HTML + GSAP) concatenated
+    with the Remotion-rendered body — BOTH engines making one video,
+  * progress-bar frame QC and full-video census frames for review.
 
 Usage:
     python render_voiceover_video.py <name> <input_dir> <repo_dir> <out_dir> \
-        [--concurrency 4]
+        [--concurrency 4] [--skip-hyperframes] [--skip-asset-synth]
 
 input_dir must contain: script.json, voiceover.mp3, sections/*.mp3
+
+Requires Node >= 22 on PATH for the HyperFrames stage (on Kaggle, install
+the Node 22 tarball first — see kernels/render-v5). With --skip-hyperframes
+the final video is the Remotion body alone (loud warning printed).
 """
 import argparse
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -28,6 +34,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from build_explainer_props import build_props  # noqa: E402
+
+HYPERFRAMES_TEMPLATES = HERE / "hyperframes"
 
 
 def stage(label):
@@ -56,6 +64,60 @@ def duration(path):
     return float(out.strip())
 
 
+def node_major() -> int:
+    try:
+        out = subprocess.run(["node", "--version"], capture_output=True, text=True).stdout.strip()
+        return int(out.lstrip("v").split(".")[0])
+    except Exception:
+        return 0
+
+
+def synth_assets(composer: Path, skip: bool) -> None:
+    """Generate SFX/BGM + b-roll into remotion-composer/public/."""
+    pub = composer / "public"
+    (pub / "audio").mkdir(parents=True, exist_ok=True)
+    (pub / "broll").mkdir(parents=True, exist_ok=True)
+    if skip:
+        print("WARNING: --skip-asset-synth — reusing whatever audio/broll exists", flush=True)
+        return
+    # SFX + BGM (fast; reuses existing files)
+    sh(f"'{sys.executable}' '{HERE / 'synth_audio.py'}' --out-dir '{pub / 'audio'}' --bgm-seconds 160")
+    # B-roll (slower; reuses existing files)
+    sh(f"'{sys.executable}' '{HERE / 'synth_broll.py'}' --out-dir '{pub / 'broll'}' --seconds 8")
+
+
+def render_hyperframes(work: Path, template: str, sfx_names: list, out_mp4: Path,
+                       gsap_src: Path, audio_src: Path) -> None:
+    """Materialize a HyperFrames workspace from a repo template and render it."""
+    ws = work / f"hf-{template}"
+    (ws / "assets").mkdir(parents=True, exist_ok=True)
+    shutil.copy(HYPERFRAMES_TEMPLATES / template / "index.html", ws / "index.html")
+    shutil.copy(gsap_src, ws / "assets" / "gsap.min.js")
+    for name in sfx_names:
+        shutil.copy(audio_src / name, ws / "assets" / name)
+    sh(f"npx --yes hyperframes render '{ws}' -o '{out_mp4}' --fps 30 --quality standard "
+       f"--browser-timeout 120", cwd=work)
+    if not out_mp4.exists():
+        raise SystemExit(f"hyperframes render produced no output for {template}")
+    # Hard timeout guard: the CLI can hang in teardown after a successful
+    # render; verify the file is complete instead of trusting exit codes.
+    d = duration(out_mp4)
+    if d < 1.0:
+        raise SystemExit(f"hyperframes render for {template} too short: {d}s")
+
+
+def concat_videos(parts: list, out: Path) -> None:
+    """Re-encoding concat (uniform h264/aac) — robust against timebase and
+    codec-parameter mismatches between Remotion and HyperFrames outputs."""
+    inputs = " ".join(f"-i '{p}'" for p in parts)
+    n = len(parts)
+    fc = f"[0:v][0:a]" + "".join(f"[{i}:v][{i}:a]" for i in range(1, n)) + \
+         f"concat=n={n}:v=1:a=1[v][a]"
+    sh(f"ffmpeg -y -loglevel error {inputs} -filter_complex '{fc}' -map '[v]' -map '[a]' "
+       f"-c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 30 "
+       f"-c:a aac -b:a 192k -ar 48000 -movflags +faststart '{out}'")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("name")
@@ -66,6 +128,10 @@ def main() -> int:
                     help="Remotion render tabs (default: Remotion's own default)")
     ap.add_argument("--reuse-props", default=None,
                     help="path to an existing props json; skips measure/transcribe/build")
+    ap.add_argument("--skip-hyperframes", action="store_true",
+                    help="render Remotion body only (no intro/outro)")
+    ap.add_argument("--skip-asset-synth", action="store_true",
+                    help="reuse existing audio/broll assets without regenerating")
     args = ap.parse_args()
 
     input_dir, repo_dir, out_dir = (Path(p) for p in (args.input_dir, args.repo_dir, args.out_dir))
@@ -104,23 +170,59 @@ def main() -> int:
         # 3. Build props from script + timing + word captions
         with stage("3_build_props"):
             props = build_props(script, durations, words)
-            print("cuts", len(props["cuts"]), "captions", len(props["captions"]))
+            print("cuts", len(props["cuts"]), "captions", len(props["captions"]),
+                  "sfx", len(props.get("sfx", [])))
 
     props_path = out_dir / f"{args.name}-props.json"
     props_path.write_text(json.dumps(props, indent=1, ensure_ascii=False))
 
-    # 4. Remotion render
+    # 4. npm install + asset synthesis (SFX/BGM/b-roll staged into public/)
     with stage("4_npm_install"):
         if not (composer / "node_modules").exists():
             sh("npm ci --no-audit --no-fund", cwd=composer)
         (composer / "public").mkdir(exist_ok=True)
         shutil.copy(input_dir / "voiceover.mp3", composer / "public" / "voiceover.mp3")
 
-    final = out_dir / f"{args.name}.mp4"
+    with stage("4b_synth_assets"):
+        synth_assets(composer, args.skip_asset_synth)
+
+    body = out_dir / f"{args.name}-body.mp4"
     with stage("5_remotion_render"):
         conc = f" --concurrency={args.concurrency}" if args.concurrency else ""
-        sh(f"npx remotion render src/index.tsx Explainer '{final}' --props '{props_path}' "
+        sh(f"npx remotion render src/index.tsx Explainer '{body}' --props '{props_path}' "
            f"--codec h264 --timeout 120000{conc} --log info", cwd=composer)
+
+    # 5b. HyperFrames intro + outro, then concat into ONE video.
+    final = body
+    use_hf = not args.skip_hyperframes
+    if use_hf and node_major() < 22:
+        print(f"WARNING: Node {node_major()} < 22 — HyperFrames unavailable. "
+              "Rendering Remotion body only. Install Node 22 to get the intro/outro.",
+              flush=True)
+        use_hf = False
+
+    if use_hf:
+        with stage("5c_hyperframes_intro_outro"):
+            gsap_src = HYPERFRAMES_TEMPLATES / "assets" / "gsap.min.js"
+            audio_src = composer / "public" / "audio"
+            intro = out_dir / "intro.mp4"
+            outro = out_dir / "outro.mp4"
+            render_hyperframes(out_dir, "intro",
+                               ["riser.wav", "impact.wav", "whoosh.wav"], intro,
+                               gsap_src, audio_src)
+            render_hyperframes(out_dir, "outro",
+                               ["chime.wav", "whoosh.wav"], outro,
+                               gsap_src, audio_src)
+            print("intro", round(duration(intro), 2), "s / outro", round(duration(outro), 2), "s")
+        with stage("5d_concat"):
+            final = out_dir / f"{args.name}.mp4"
+            concat_videos([intro, body, outro], final)
+            timing["hyperframes_intro_s"] = round(duration(intro), 2)
+            timing["hyperframes_outro_s"] = round(duration(outro), 2)
+    else:
+        final = out_dir / f"{args.name}.mp4"
+        if final != body and not final.exists():
+            shutil.copy(body, final)
 
     # 6. QC: real checks, not a smoke test
     with stage("6_qc"):
@@ -134,6 +236,10 @@ def main() -> int:
         qc = {"video_duration_s": round(vdur, 2), "expected_duration_s": round(sum(durations), 2),
               "duration_error_s": round(vdur - sum(durations), 2), "stream": json.loads(info)["streams"][0],
               "audio_codec": astreams, "file_mb": round(final.stat().st_size / 2**20, 1)}
+        if use_hf:
+            qc["intro_outro_included"] = True
+            qc["duration_error_s"] = round(vdur - sum(durations) - timing.get("hyperframes_intro_s", 0)
+                                           - timing.get("hyperframes_outro_s", 0), 2)
         if not args.reuse_props:
             script_words = len(" ".join(s["text"] for s in script["sections"]).split())
             qc["script_words"] = script_words
@@ -147,23 +253,30 @@ def main() -> int:
         for t in [5, vdur * 0.25, vdur * 0.5, vdur * 0.75, vdur - 5]:
             sh(f"ffmpeg -loglevel error -y -ss {t:.2f} -i '{final}' -frames:v 1 -vf scale=960:-1 "
                f"'{frames}/t{int(t)}.png'")
-        # Progress-bar cuts: frame at each cut's midpoint, where the fill has
-        # settled, so bar+counter can be compared against the label text.
-        pb_frames = []
+        # Census frames: one at EVERY cut midpoint (charts at 70%), where the
+        # scene is fully settled — this is what a VLM reviews for visual QC.
+        census = frames / "census"
+        census.mkdir(exist_ok=True)
+        offsets = []
         for c in props["cuts"]:
-            if c.get("type") == "progress_bar":
-                mid = (c["in_seconds"] + c["out_seconds"]) / 2
-                fp = frames / f"progress-{c['id']}.png"
-                sh(f"ffmpeg -loglevel error -y -ss {mid:.2f} -i '{final}' -frames:v 1 "
-                   f"-vf scale=960:-1 '{fp}'")
-                pb_frames.append({"id": c["id"], "label": c.get("progressLabel"),
-                                  "progress": c.get("progress"), "frame": str(fp)})
-        (out_dir / f"{args.name}-progress-frames.json").write_text(json.dumps(pb_frames, indent=1))
-        print(f"progress-bar frames: {len(pb_frames)}")
+            frac = 0.7 if c.get("type") in ("bar_chart", "line_chart", "pie_chart", "kpi_grid") else 0.5
+            mid = c["in_seconds"] + (c["out_seconds"] - c["in_seconds"]) * frac
+            if use_hf:
+                mid += timing.get("hyperframes_intro_s", 0)  # census maps onto the FINAL video
+            offsets.append((c["id"], c.get("type"), mid))
+        meta = []
+        for cid, ctype, t in offsets:
+            fp = census / f"{cid}.{ctype}.png"
+            sh(f"ffmpeg -loglevel error -y -ss {t:.2f} -i '{final}' -frames:v 1 "
+               f"-vf scale=960:-1 '{fp}'")
+            meta.append({"id": cid, "type": ctype, "t": round(t, 2), "frame": str(fp)})
+        (out_dir / f"{args.name}-census.json").write_text(json.dumps(meta, indent=1))
+        print(f"census frames: {len(meta)}")
 
     timing["total_wall_s"] = round(time.time() - T0, 1)
     (out_dir / f"{args.name}-timing.json").write_text(json.dumps(timing, indent=1))
     print("\nTIMING", json.dumps(timing, indent=1))
+    print(f"\nFINAL VIDEO: {final}")
     return 0
 
 

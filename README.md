@@ -294,12 +294,45 @@ You don't need paid API keys to make real videos. Out of the box, `make setup` g
 | **Narration** | Piper TTS | Free offline text-to-speech — real human-sounding narration |
 | **Open footage** | Archive.org + NASA + Wikimedia Commons | Free/open archival footage, educational media, and documentary texture |
 | **Extra stock** | Pexels + Unsplash + Pixabay | Free stock footage/images (developer keys are free to get) |
+| **Procedural stock b-roll** | `synth_broll.py` | Zero-key cinematic abstract footage (mesh gradients, bokeh, light leaks, aurora) rendered with numpy + FFmpeg |
+| **SFX + BGM** | `synth_audio.py` | Zero-key whooshes, impacts, risers, chimes and a 150s ambient music bed synthesized offline |
 | **Composition (React)** | Remotion | React-based rendering — spring-animated image scenes, text cards, stat cards, charts, TikTok-style word-level captions, TalkingHead |
 | **Composition (HTML/GSAP)** | HyperFrames | HTML/CSS/GSAP rendering — kinetic typography, product promos, launch reels, registry blocks, website-to-video, rigged SVG character animation |
 | **Post-production** | FFmpeg | Encoding, subtitle burn-in, audio mixing, color grading |
 | **Subtitles** | Built-in | Auto-generated captions with word-level timing |
 
 OpenMontage picks between Remotion and HyperFrames at proposal time (locked as `render_runtime`). Remotion is the default for data-driven explainers and anything using the existing React scene stack; HyperFrames is the default for motion-graphics-heavy briefs that express naturally as HTML + GSAP, including the `character-animation` pipeline's SVG/GSAP rig output. See `skills/core/hyperframes.md` for the full decision matrix.
+
+### Motion Design v2 — both engines in one video
+
+The Explainer render path now combines both composition engines and a full
+creative-direction system, with no API keys and no manual editing:
+
+* **Per-scene animated backgrounds** — eight distinct styles (aurora, mesh,
+  beams, particles, grid-pulse, orbits, waves, grain) that rotate per cut and
+  crossfade at every line change, driven by per-section color palettes
+  (`remotion-composer/src/motion/`).
+* **Scene transitions** — eight entrance/exit choreographies (slides, zoom
+  punch, wipe, 3D flip, glitch settle, rise) assigned per scene type, plus an
+  accent luma sweep and a continuously drifting camera so no frame is static.
+* **Kinetic typography** — word-staggered text reveals with keyword
+  highlighting, glass panels, kicker labels and alternating layouts.
+* **Stock b-roll** — procedurally generated cinematic clips behind hero
+  titles and selected text scenes (Ken Burns drift + palette-tinted scrim).
+* **SFX + BGM** — an automatic cue sheet (whoosh on every cut, impact on
+  heroes, riser into sections, chime on progress completion) and an ambient
+  music bed with fades, mixed under the narration.
+* **HyperFrames intro/outro** — GSAP kinetic-typography title cards rendered
+  by the HyperFrames engine and concatenated with the Remotion body into one
+  video (`scripts/kaggle/hyperframes/`), so both runtimes contribute to the
+  final cut.
+
+Run it end to end with the Kaggle harness:
+
+```bash
+python scripts/kaggle/render_voiceover_video.py <name> <input_dir> <repo_dir> <out_dir> \
+    --concurrency 4          # input_dir: script.json + voiceover.mp3 + sections/*.mp3
+```
 
 **Two free-ish paths:**
 

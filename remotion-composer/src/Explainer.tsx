@@ -33,6 +33,24 @@ import { ProviderChip } from "./components/ProviderChip";
 import { resolveAsset } from "./lib/resolveAsset";
 import type { ParticleType } from "./components/ParticleOverlay";
 import { resolveTheme, type ThemeConfig, DEFAULT_THEME } from "./Root";
+import {
+  paletteForSection,
+  paletteByIndex,
+  hashString,
+  type ScenePalette,
+} from "./motion/palettes";
+import {
+  SceneBackground,
+  bgStyleForIndex,
+  type BgStyle,
+} from "./motion/SceneBackground";
+import {
+  SceneTransition,
+  CameraDrift,
+  TransitionSweep,
+  transitionForIndex,
+  type TransitionStyle,
+} from "./motion/SceneTransition";
 
 // Load Space Grotesk font for cinematic typography
 const { fontFamily } = loadSpaceGrotesk(["400", "700"]);
@@ -82,105 +100,29 @@ function shiftColor(hex: string, amount: number): string {
   return `rgb(${clamp(r + (255 - r) * amount)}, ${clamp(g + (255 - g) * amount)}, ${clamp(b + (255 - b) * amount)})`;
 }
 
-const AnimatedBackground: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
+// ---------------------------------------------------------------------------
+// BaseBackground — the neutral deep layer beneath every scene.
+// Per-scene animated backgrounds (SceneBackground) crossfade in/out at cut
+// boundaries; this base shows through for those few blend frames, giving
+// every cut an intentional visual "beat" instead of a hard pop.
+// ---------------------------------------------------------------------------
+
+const BaseBackground: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
-
+  const { fps } = useVideoConfig();
   const bg = theme.backgroundColor;
-  const primary = theme.primaryColor;
-  const accent = theme.accentColor;
-  const surface = theme.surfaceColor;
-  const light = isLightColor(bg);
-
-  // Slow-moving gradient angles
-  const angle1 = 135 + Math.sin(frame / (fps * 8)) * 30;
-
-  // Build gradient from theme colors instead of hardcoded dark blue
   const { r: bgR, g: bgG, b: bgB } = hexToRgb(bg);
-  const { r: priR, g: priG, b: priB } = hexToRgb(primary);
-  const { r: accR, g: accG, b: accB } = hexToRgb(accent);
-
-  const gradient = `
-    radial-gradient(ellipse at ${30 + Math.sin(frame / (fps * 10)) * 20}% ${40 + Math.cos(frame / (fps * 8)) * 20}%,
-      rgba(${priR}, ${priG}, ${priB}, 0.15) 0%, transparent 60%),
-    radial-gradient(ellipse at ${70 + Math.cos(frame / (fps * 7)) * 20}% ${60 + Math.sin(frame / (fps * 9)) * 25}%,
-      rgba(${accR}, ${accG}, ${accB}, 0.1) 0%, transparent 55%),
-    linear-gradient(${angle1}deg, ${bg} 0%, ${shiftColor(bg, light ? -0.05 : 0.05)} 40%, ${surface} 70%, ${bg} 100%)
-  `;
-
-  // Floating orbs — derived from theme chart colors with low opacity
-  const orbColors = theme.chartColors.slice(0, 5);
-  const orbOpacity = light ? 0.06 : 0.08;
-  const orbs = [
-    { x: 20, y: 30, size: 300, color: orbColors[0] || primary, speedX: 7, speedY: 11 },
-    { x: 70, y: 60, size: 250, color: orbColors[1] || accent, speedX: 9, speedY: 8 },
-    { x: 40, y: 80, size: 200, color: orbColors[2] || primary, speedX: 13, speedY: 6 },
-    { x: 80, y: 20, size: 350, color: orbColors[3] || accent, speedX: 11, speedY: 14 },
-    { x: 10, y: 70, size: 180, color: orbColors[4] || primary, speedX: 8, speedY: 10 },
-  ];
-
-  // Grid and overlay colors adapt to light vs dark backgrounds
-  const gridColor = light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.02)";
-  const fadeColor = light
-    ? `rgba(${bgR},${bgG},${bgB},0.2)`
-    : `rgba(${bgR},${bgG},${bgB},0.4)`;
-
+  const t = frame / fps;
   return (
-    <AbsoluteFill style={{ background: gradient }}>
-      {/* Floating glow orbs.
-          Rendered as radial gradients rather than `filter: blur()` on solid
-          circles: at 6-8% opacity the two are visually indistinguishable, but
-          a Gaussian blur pass per orb per frame is one of the most expensive
-          rasterization steps in headless-Chromium frame rendering. This keeps
-          the same soft-glow look at a fraction of the render cost. */}
-      {orbs.map((orb, i) => {
-        const ox = orb.x + Math.sin(frame / (fps * orb.speedX)) * 15;
-        const oy = orb.y + Math.cos(frame / (fps * orb.speedY)) * 12;
-        const { r, g, b } = hexToRgb(orb.color);
-        const glowSize = Math.round(orb.size * 2.2);
-        return (
-          <div
-            key={i}
-            style={{
-              position: "absolute",
-              left: `${ox}%`,
-              top: `${oy}%`,
-              width: glowSize,
-              height: glowSize,
-              borderRadius: "50%",
-              background: `radial-gradient(circle, rgba(${r}, ${g}, ${b}, ${orbOpacity}) 0%, rgba(${r}, ${g}, ${b}, ${orbOpacity * 0.45}) 22%, rgba(${r}, ${g}, ${b}, 0) 46%)`,
-              transform: "translate(-50%, -50%)",
-            }}
-          />
-        );
-      })}
-
-      {/* Subtle grid overlay */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage: `
-            linear-gradient(${gridColor} 1px, transparent 1px),
-            linear-gradient(90deg, ${gridColor} 1px, transparent 1px)
-          `,
-          backgroundSize: "60px 60px",
-          opacity: 0.5 + Math.sin(frame / (fps * 20)) * 0.2,
-        }}
-      />
-
-      {/* Top gradient fade for depth */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: "30%",
-          background: `linear-gradient(to bottom, ${fadeColor}, transparent)`,
-        }}
-      />
-    </AbsoluteFill>
+    <AbsoluteFill
+      style={{
+        background: `
+          radial-gradient(ellipse at ${38 + Math.sin(t * 0.11) * 8}% ${42 + Math.cos(t * 0.09) * 8}%,
+            rgba(${bgR}, ${bgG}, ${bgB}, 0.9) 0%, transparent 62%),
+          linear-gradient(165deg, ${bg} 0%, ${shiftColor(bg, isLightColor(bg) ? -0.04 : 0.04)} 100%)
+        `,
+      }}
+    />
   );
 };
 
@@ -269,6 +211,25 @@ interface Cut {
   screenshotSteps?: ScreenshotStep[];
   screenshotSize?: { width: number; height: number };
   cursorStartAt?: [number, number];
+  // --- Creative direction (motion design v2) ---
+  /** Which section of the script this cut belongs to (drives the palette). */
+  sectionIndex?: number;
+  /** Total number of sections (drives palette spread). */
+  sectionCount?: number;
+  /** Explicit palette override (index into SECTION_PALETTES). */
+  paletteIndex?: number;
+  /** Animated background style for this cut (aurora|mesh|beams|...). */
+  bgStyle?: BgStyle;
+  /** Entrance/exit choreography style (slide-left|zoom-punch|...). */
+  transition?: TransitionStyle;
+  /** Show the accent luma sweep at cut start (default true). */
+  sweep?: boolean;
+  /** Kicker label above text (e.g. "PART 2 — PIPELINE"). */
+  kicker?: string;
+  /** Text alignment rotation for text_card scenes. */
+  align?: "left" | "center" | "right";
+  /** Words to highlight in the accent color on text_card scenes. */
+  accentWords?: string[];
 }
 
 interface Overlay {
@@ -303,12 +264,21 @@ interface AudioConfig {
   };
 }
 
+/** One sound-effect cue: play `src` starting at `atSeconds`. */
+interface SfxTrack {
+  src: string;
+  atSeconds: number;
+  volume?: number;
+}
+
 export interface ExplainerProps {
   [key: string]: unknown;
   cuts: Cut[];
   overlays?: Overlay[];
   captions?: WordCaption[];
   audio?: AudioConfig;
+  /** Sound-effect cues (whooshes on cuts, impacts on heroes, chimes...). */
+  sfx?: SfxTrack[];
 }
 
 // ---------------------------------------------------------------------------
@@ -481,55 +451,68 @@ const VideoScene: React.FC<{
 // Scene renderer — maps cut type / source to the right component
 // ---------------------------------------------------------------------------
 
-// Background image layer — renders an AI-generated/stock image behind data components
+// Background image layer — renders a stock/AI image behind data components.
+// v2: palette-tinted scrim (instead of flat navy) + cinematic Ken Burns with
+// diagonal drift, so b-roll feels like an editor placed it, not a slide deck.
 const BackgroundImageLayer: React.FC<{
   src: string;
   overlayOpacity?: number;
+  palette?: ScenePalette;
   children: React.ReactNode;
-}> = ({ src, overlayOpacity = 0.55, children }) => {
+}> = ({ src, overlayOpacity = 0.5, palette, children }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
-  // Subtle ken-burns on the background
+  // Cinematic Ken Burns: zoom + slow diagonal drift, direction varies by seed.
   const progress = interpolate(frame, [0, durationInFrames], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const bgScale = 1 + progress * 0.08;
+  const seed = hashString(src);
+  const dirX = seed % 2 === 0 ? 1 : -1;
+  const bgScale = 1.08 + progress * 0.08;
+  const bgX = dirX * interpolate(progress, [0, 1], [-18, 18]);
+  const bgY = interpolate(progress, [0, 1], [10, -10]);
+
+  const scrim = palette
+    ? withAlpha(palette.bgBase, overlayOpacity)
+    : `rgba(15, 23, 42, ${overlayOpacity})`;
 
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
-      {/* Background image with subtle zoom */}
+      {/* Background image with cinematic drift */}
       <Img
         src={resolveAsset(src)}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          transform: `scale(${bgScale})`,
+          transform: `scale(${bgScale}) translate(${bgX}px, ${bgY}px)`,
           willChange: "transform",
         }}
       />
-      {/* Dark overlay for readability */}
-      <AbsoluteFill
-        style={{
-          background: `rgba(15, 23, 42, ${overlayOpacity})`,
-        }}
-      />
+      {/* Palette-tinted scrim for readability */}
+      <AbsoluteFill style={{ background: scrim }} />
       {/* Component content on top */}
       {children}
     </AbsoluteFill>
   );
 };
 
-// Background video layer — plays a looping video behind component content with dark overlay
+// Background video layer — plays a looping stock clip behind component
+// content with a palette-tinted scrim.
 const BackgroundVideoLayer: React.FC<{
   src: string;
   startFrom?: number;
   overlayOpacity?: number;
+  palette?: ScenePalette;
   children: React.ReactNode;
-}> = ({ src, startFrom = 0, overlayOpacity = 0.55, children }) => {
+}> = ({ src, startFrom = 0, overlayOpacity = 0.5, palette, children }) => {
   const { fps } = useVideoConfig();
+
+  const scrim = palette
+    ? withAlpha(palette.bgBase, overlayOpacity)
+    : `rgba(15, 23, 42, ${overlayOpacity})`;
 
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
@@ -544,19 +527,26 @@ const BackgroundVideoLayer: React.FC<{
         }}
         muted
       />
-      {/* Dark overlay for readability */}
-      <AbsoluteFill
-        style={{
-          background: `rgba(15, 23, 42, ${overlayOpacity})`,
-        }}
-      />
+      {/* Palette-tinted scrim for readability */}
+      <AbsoluteFill style={{ background: scrim }} />
       {/* Component content on top */}
       {children}
     </AbsoluteFill>
   );
 };
 
-const SceneRenderer: React.FC<{ cut: Cut; theme: ThemeConfig; durationInFrames: number }> = ({ cut, theme, durationInFrames }) => {
+/** hex → rgba() string (used for palette scrims). */
+function withAlpha(hex: string, alpha: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+const SceneRenderer: React.FC<{
+  cut: Cut;
+  theme: ThemeConfig;
+  palette: ScenePalette;
+  durationInFrames: number;
+}> = ({ cut, theme, palette, durationInFrames }) => {
   // Wrap component with background video or image if specified
   const maybeWrapWithBg = (element: React.ReactElement) => {
     if (cut.backgroundVideo) {
@@ -564,17 +554,19 @@ const SceneRenderer: React.FC<{ cut: Cut; theme: ThemeConfig; durationInFrames: 
         <BackgroundVideoLayer
           src={cut.backgroundVideo}
           startFrom={cut.backgroundVideoStart ?? 0}
-          overlayOpacity={cut.backgroundOverlay ?? 0.55}
+          overlayOpacity={cut.backgroundOverlay ?? 0.5}
+          palette={palette}
         >
           {element}
         </BackgroundVideoLayer>
       );
     }
-    if (cut.backgroundImage) {
+    if (cut.backgroundImage && cut.type !== "screenshot_scene") {
       return (
         <BackgroundImageLayer
           src={cut.backgroundImage}
-          overlayOpacity={cut.backgroundOverlay ?? 0.55}
+          overlayOpacity={cut.backgroundOverlay ?? 0.5}
+          palette={palette}
         >
           {element}
         </BackgroundImageLayer>
@@ -584,22 +576,41 @@ const SceneRenderer: React.FC<{ cut: Cut; theme: ThemeConfig; durationInFrames: 
   };
 
   // Resolve the scene element based on cut type, then wrap with backgroundImage if set
-  // Use transparent bg so the animated gradient background shows through
+  // Use transparent bg so the animated scene background shows through
   // When no explicit backgroundColor on the cut, inherit from theme
   const rawBg = (cut.backgroundImage || cut.backgroundVideo) ? "transparent" : (cut.backgroundColor || theme.surfaceColor);
   const bgColor = (rawBg === theme.backgroundColor || rawBg === "#0F172A" || rawBg === "#0f172a") ? "transparent" : rawBg;
-  const textColor = cut.color || theme.textColor;
-  const accent = cut.accentColor || theme.accentColor;
+  const textColor = cut.color || palette.text;
+  const accent = cut.accentColor || palette.accent;
 
-  // Explicit component types — use theme-derived defaults for colors
+  // Explicit component types — use palette-derived defaults for colors
   if (cut.type === "text_card" && cut.text) {
     return maybeWrapWithBg(
-      <TextCard text={cut.text} fontSize={cut.fontSize} color={textColor} backgroundColor={bgColor} />
+      <TextCard
+        text={cut.text}
+        fontSize={cut.fontSize}
+        color={textColor}
+        backgroundColor={bgColor}
+        align={cut.align}
+        kicker={cut.kicker}
+        accentColor={accent}
+        accentWords={cut.accentWords}
+        glass={palette.glass}
+        glassEdge={palette.glassEdge}
+        mutedColor={palette.muted}
+      />
     );
   }
   if (cut.type === "stat_card" && cut.stat) {
     return maybeWrapWithBg(
-      <StatCard stat={cut.stat} subtitle={cut.subtitle} accentColor={accent} backgroundColor={bgColor} />
+      <StatCard
+        stat={cut.stat}
+        subtitle={cut.subtitle}
+        accentColor={accent}
+        backgroundColor={bgColor}
+        glass={palette.glass}
+        glassEdge={palette.glassEdge}
+      />
     );
   }
   if (cut.type === "callout" && cut.text) {
@@ -628,8 +639,9 @@ const SceneRenderer: React.FC<{ cut: Cut; theme: ThemeConfig; durationInFrames: 
         subtitle={cut.heroSubtitle || cut.subtitle}
         accentColor={accent}
         textColor={textColor}
-        subtitleColor={theme.mutedTextColor}
-        scrimBackground={heroScrim(theme)}
+        subtitleColor={palette.muted}
+        scrimBackground="none"
+        noScrim
       />
     );
   }
@@ -837,25 +849,62 @@ const OverlayRenderer: React.FC<{ overlay: Overlay; theme: ThemeConfig }> = ({
 // ---------------------------------------------------------------------------
 
 export const Explainer: React.FC<ExplainerProps> = (props) => {
-  const { cuts, overlays, captions, audio } = props;
+  const { cuts, overlays, captions, audio, sfx } = props;
   const { fps, durationInFrames } = useVideoConfig();
 
   // Resolve theme from props — playbook name, theme name, or custom themeConfig
   const theme = resolveTheme(props as Record<string, unknown>);
 
+  // Section count for palette spread (falls back to cut count).
+  const sectionCount =
+    (typeof props.sectionCount === "number" && props.sectionCount > 0)
+      ? (props.sectionCount as number)
+      : Math.max(1, ...cuts.map((c) => (c.sectionIndex ?? 0) + 1));
+
   return (
     <AbsoluteFill style={{ background: theme.backgroundColor, fontFamily: theme.headingFont || fontFamily }}>
-      {/* Layer 0: Animated gradient background — driven by theme */}
-      <AnimatedBackground theme={theme} />
+      {/* Layer 0: Neutral animated base — visible during scene crossfades */}
+      <BaseBackground theme={theme} />
 
-      {/* Layer 1: Visual scenes */}
-      {cuts.map((cut) => {
+      {/* Layer 1: Visual scenes — each with its own animated background,
+          transition choreography, camera drift, and luma sweep */}
+      {cuts.map((cut, i) => {
         const from = Math.round(cut.in_seconds * fps);
-        const duration = Math.round((cut.out_seconds - cut.in_seconds) * fps);
+        const duration = Math.max(1, Math.round((cut.out_seconds - cut.in_seconds) * fps));
+        const seed = hashString(cut.id);
+
+        // Creative direction: explicit props win, deterministic rotation fills
+        // the gaps so even OLD props files render with full motion variety.
+        const sectionIndex = cut.sectionIndex ?? 0;
+        const palette =
+          cut.paletteIndex !== undefined
+            ? paletteByIndex(cut.paletteIndex)
+            : paletteForSection(sectionIndex, sectionCount, i);
+        const bgStyle: BgStyle = cut.bgStyle ?? bgStyleForIndex(i + sectionIndex);
+        const transition: TransitionStyle = cut.transition ?? transitionForIndex(i);
+        const hasBroll = Boolean(cut.backgroundVideo || cut.backgroundImage);
 
         return (
           <Sequence key={cut.id} from={from} durationInFrames={duration}>
-            <SceneRenderer cut={cut} theme={theme} durationInFrames={duration} />
+            <CameraDrift durationInFrames={duration} seed={seed}>
+              {!hasBroll && (
+                <SceneBackground
+                  style={bgStyle}
+                  palette={palette}
+                  seed={seed}
+                  durationInFrames={duration}
+                />
+              )}
+              <SceneTransition style={transition} durationInFrames={duration}>
+                <SceneRenderer
+                  cut={cut}
+                  theme={theme}
+                  palette={palette}
+                  durationInFrames={duration}
+                />
+              </SceneTransition>
+            </CameraDrift>
+            <TransitionSweep palette={palette} seed={seed} enabled={cut.sweep !== false} />
           </Sequence>
         );
       })}
@@ -890,6 +939,17 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
       {audio?.narration?.src && (
         <Audio src={resolveAsset(audio.narration.src)} volume={audio.narration.volume ?? 1} />
       )}
+
+      {/* Layer 4: Audio — sound-effect cues (whooshes, impacts, chimes) */}
+      {sfx?.map((cue, i) => (
+        <Sequence
+          key={`sfx-${i}`}
+          from={Math.max(0, Math.round(cue.atSeconds * fps))}
+          durationInFrames={Math.round(4 * fps)}
+        >
+          <Audio src={resolveAsset(cue.src)} volume={cue.volume ?? 0.6} />
+        </Sequence>
+      ))}
 
       {/* Layer 4: Audio — music with offset, fade in/out, and optional loop */}
       {audio?.music?.src && (

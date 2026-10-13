@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OpenMontage — Intro</title>
+  <!--
+    HyperFrames kinetic-typography intro (5.4s, 1920x1080@30).
+
+    Rendered by the HyperFrames engine (HTML + GSAP), then concatenated with
+    the Remotion-rendered body and the outro — the "both engines make one
+    video" handoff layer.
+
+    Contract notes (validated with `hyperframes lint`):
+      * exactly one root index.html with data-composition-id per workspace,
+      * one visual clip (#scene) + leaf audio clips with ids (media_missing_id
+        otherwise silences the audio),
+      * GSAP animates transforms/opacity ONLY (layout props like top or
+        letterSpacing snap to integer pixels under seek-by-frame capture),
+      * no gsap.utils.random() — per-letter rotations come from a fixed
+        array so parallel workers render identical frames,
+      * all repeats bounded, timeline paused and registered at
+        window.__timelines["root"].
+  -->
+  <style>
+    :root {
+      --color-bg: #0B1026;
+      --color-fg: #F4F6FF;
+      --color-accent: #8B7CFF;
+      --color-accent2: #2DD4BF;
+      --font-heading: 'Outfit', 'Inter', 'Segoe UI', Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #000; }
+    [data-composition-id="root"] {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: var(--color-bg);
+      font-family: var(--font-heading);
+    }
+    .clip { position: absolute; inset: 0; }
+
+    /* ---- Background (plain nested divs, animated via GSAP transforms) ---- */
+    .base {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse at 30% 35%, rgba(109, 91, 246, 0.20) 0%, transparent 55%),
+        radial-gradient(ellipse at 72% 68%, rgba(45, 212, 191, 0.13) 0%, transparent 50%),
+        linear-gradient(165deg, #0B1026 0%, #151B3B 60%, #0B1026 100%);
+    }
+    .grid {
+      position: absolute; inset: -60px;
+      background-image:
+        linear-gradient(rgba(244, 246, 255, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(244, 246, 255, 0.045) 1px, transparent 1px);
+      background-size: 96px 96px;
+    }
+    .vignette {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 46%, rgba(0,0,0,0.55) 100%);
+    }
+    .scanline {
+      position: absolute; left: 0; top: 42%;
+      width: 100%; height: 3px;
+      background: linear-gradient(90deg, transparent, rgba(45, 212, 191, 0.5), transparent);
+    }
+
+    /* ---- Stage ---- */
+    .stage-wrap {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .frame {
+      position: relative;
+      width: 1240px;
+      text-align: center;
+    }
+    .kicker {
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: 0.5em;
+      text-transform: uppercase;
+      color: var(--color-accent2);
+      margin-bottom: 34px;
+    }
+    .wordmark {
+      display: flex;
+      justify-content: center;
+      flex-wrap: nowrap;
+      font-size: 168px;
+      font-weight: 800;
+      line-height: 1;
+      color: var(--color-fg);
+      text-shadow: 0 10px 60px rgba(0, 0, 0, 0.5);
+    }
+      .wordmark span { display: inline-block; }
+      .wordmark .open { color: var(--color-accent); }
+    .tagline {
+      margin-top: 38px;
+      font-size: 34px;
+      font-weight: 400;
+      letter-spacing: 0.34em;
+      text-transform: uppercase;
+      color: rgba(244, 246, 255, 0.82);
+    }
+    .underline {
+      margin: 30px auto 0;
+      width: 520px; height: 4px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, transparent, var(--color-accent2), transparent);
+    }
+    .corner {
+      position: absolute;
+      width: 74px; height: 74px;
+      border: 4px solid rgba(139, 124, 255, 0.85);
+    }
+      .corner.tl { top: -64px; left: -84px;  border-right: none; border-bottom: none; border-radius: 10px 0 0 0; }
+      .corner.tr { top: -64px; right: -84px; border-left: none;  border-bottom: none; border-radius: 0 10px 0 0; }
+      .corner.bl { bottom: -84px; left: -84px;  border-right: none; border-top: none; border-radius: 0 0 0 10px; }
+      .corner.br { bottom: -84px; right: -84px; border-left: none;  border-top: none; border-radius: 0 0 10px 0; }
+    .shine {
+      position: absolute; inset: -40px;
+      background: linear-gradient(105deg, transparent 42%, rgba(244, 246, 255, 0.16) 50%, transparent 58%);
+      pointer-events: none;
+    }
+    .fadeout {
+      position: absolute; inset: 0;
+      background: #000;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+  <script src="assets/gsap.min.js"></script>
+</head>
+<body>
+  <div data-composition-id="root" data-start="0" data-duration="5.4" data-width="1920" data-height="1080" data-fps="30">
+
+    <!-- Track 0: the whole visual scene -->
+    <div id="scene" class="clip" data-start="0" data-duration="5.4" data-track-index="0">
+      <div class="base"></div>
+      <div class="grid"></div>
+      <div class="scanline"></div>
+      <div class="vignette"></div>
+
+      <div class="stage-wrap">
+        <div class="frame">
+          <div class="kicker">The open-source pipeline</div>
+          <div class="wordmark">
+            <span class="open">O</span><span class="open">p</span><span class="open">e</span><span class="open">n</span><span class="open" style="margin-right:0.18em">&nbsp;</span><span>M</span><span>o</span><span>n</span><span>t</span><span>a</span><span>g</span><span>e</span>
+          </div>
+          <div class="tagline">Agentic video production</div>
+          <div class="underline"></div>
+          <div class="corner tl"></div>
+          <div class="corner tr"></div>
+          <div class="corner bl"></div>
+          <div class="corner br"></div>
+          <div class="shine"></div>
+        </div>
+      </div>
+
+      <div class="fadeout"></div>
+    </div>
+
+    <!-- Audio (leaf clips with stable ids — required for media discovery) -->
+    <audio id="sfx-riser"  data-start="0.15" data-duration="1.6" data-track-index="3" src="assets/riser.wav"  data-volume="0.55"></audio>
+    <audio id="sfx-impact" data-start="1.35" data-duration="0.8" data-track-index="4" src="assets/impact.wav" data-volume="0.6"></audio>
+    <audio id="sfx-whoosh" data-start="4.45" data-duration="0.6" data-track-index="5" src="assets/whoosh.wav" data-volume="0.4"></audio>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // Fixed per-letter rotation offsets (no gsap.utils.random — workers
+      // must render identical frames).
+      const LETTER_ROTS = [-9, 6, -4, 11, 0, 8, -12, 5, -7, 10, -5, 9];
+
+      // --- Background life ---
+      tl.fromTo("#scene", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power1.out" }, 0);
+      tl.fromTo(".grid",
+        { scale: 1.18, opacity: 0, x: 0 },
+        { scale: 1.0, opacity: 1, x: 96, duration: 5.4, ease: "none" },
+        0);
+      tl.fromTo(".scanline", { y: -260, opacity: 0 }, { y: 320, opacity: 1, duration: 3.6, ease: "power1.inOut" }, 0.2);
+
+      // --- Wordmark letters: cascade slam with overshoot ---
+      tl.fromTo(".wordmark span",
+        { y: -170, opacity: 0, rotate: function (i) { return LETTER_ROTS[i % LETTER_ROTS.length]; }, scale: 1.3 },
+        { y: 0, opacity: 1, rotate: 0, scale: 1, duration: 0.62, ease: "back.out(1.7)", stagger: 0.052 },
+        0.55);
+
+      // --- Kicker + tagline: transform-only reveals ---
+      tl.fromTo(".kicker",  { opacity: 0, y: 26 },  { opacity: 1, y: 0, duration: 0.7,  ease: "power3.out" }, 1.55);
+      tl.fromTo(".tagline", { opacity: 0, y: 22 },  { opacity: 1, y: 0, duration: 0.66, ease: "power3.out" }, 1.85);
+
+      // --- Underline draw + corner brackets + shine sweep ---
+      tl.fromTo(".underline", { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.55, ease: "power2.out" }, 2.15);
+      tl.fromTo(".corner", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2.2)", stagger: 0.07 }, 2.35);
+      tl.fromTo(".shine", { xPercent: -120 }, { xPercent: 120, duration: 1.05, ease: "power2.inOut" }, 2.45);
+
+      // --- Hold float (bounded yoyo) ---
+      tl.to(".frame", { y: -10, duration: 0.85, ease: "sine.inOut", yoyo: true, repeat: 1 }, 2.9);
+
+      // --- Handoff punch: scale up + fade to black into the Remotion body ---
+      tl.to(".frame", { scale: 1.09, duration: 0.62, ease: "power2.in" }, 4.55);
+      tl.to(".fadeout", { opacity: 1, duration: 0.5, ease: "power1.in" }, 4.85);
+
+      window.__timelines["root"] = tl;
+    </script>
+  </div>
+</body>
+</html>

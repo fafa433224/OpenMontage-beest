@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OpenMontage — Outro</title>
+  <!--
+    HyperFrames outro (4.8s, 1920x1080@30): end-card that closes the video
+    after the Remotion body. Same lint-clean contract as intro.html:
+    one visual clip, leaf audio clips with ids, transform-only GSAP,
+    fixed values (no random), bounded repeats.
+  -->
+  <style>
+    :root {
+      --color-bg: #0B1026;
+      --color-fg: #F4F6FF;
+      --color-accent: #8B7CFF;
+      --color-accent2: #2DD4BF;
+      --font-heading: 'Outfit', 'Inter', 'Segoe UI', Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #000; }
+    [data-composition-id="root"] {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: var(--color-bg);
+      font-family: var(--font-heading);
+    }
+    .clip { position: absolute; inset: 0; }
+
+    .base {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse at 50% 42%, rgba(109, 91, 246, 0.17) 0%, transparent 58%),
+        linear-gradient(180deg, #0B1026 0%, #10173a 55%, #0B1026 100%);
+    }
+    .glow {
+      position: absolute; left: 50%; top: 46%;
+      width: 1300px; height: 560px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: radial-gradient(ellipse at center, rgba(45, 212, 191, 0.13) 0%, transparent 65%);
+    }
+    .vignette {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.62) 100%);
+    }
+
+    .stage-wrap {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .card { text-align: center; }
+    .mark {
+      display: flex; justify-content: center;
+      font-size: 108px; font-weight: 800; line-height: 1;
+      color: var(--color-fg);
+      text-shadow: 0 10px 60px rgba(0, 0, 0, 0.5);
+    }
+      .mark span { display: inline-block; }
+      .mark .open { color: var(--color-accent); }
+    .built {
+      margin-top: 30px;
+      font-size: 32px; font-weight: 600;
+      letter-spacing: 0.3em; text-transform: uppercase;
+      color: var(--color-accent2);
+    }
+    .repo {
+      margin-top: 18px;
+      font-size: 27px; font-weight: 400;
+      color: rgba(244, 246, 255, 0.66);
+      letter-spacing: 0.06em;
+    }
+    .rule {
+      margin: 34px auto 0;
+      width: 420px; height: 3px; border-radius: 2px;
+      background: linear-gradient(90deg, transparent, rgba(139, 124, 255, 0.8), transparent);
+    }
+    .fadeout { position: absolute; inset: 0; background: #000; opacity: 0; }
+  </style>
+  <script src="assets/gsap.min.js"></script>
+</head>
+<body>
+  <div data-composition-id="root" data-start="0" data-duration="4.8" data-width="1920" data-height="1080" data-fps="30">
+
+    <div id="scene" class="clip" data-start="0" data-duration="4.8" data-track-index="0">
+      <div class="base"></div>
+      <div class="glow"></div>
+      <div class="vignette"></div>
+
+      <div class="stage-wrap">
+        <div class="card">
+          <div class="mark">
+            <span class="open">O</span><span class="open">p</span><span class="open">e</span><span class="open">n</span><span class="open" style="margin-right:0.18em">&nbsp;</span><span>M</span><span>o</span><span>n</span><span>t</span><span>a</span><span>g</span><span>e</span>
+          </div>
+          <div class="built">Built with the open pipeline</div>
+          <div class="repo">github.com/fafa433224/OpenMontage-beest</div>
+          <div class="rule"></div>
+        </div>
+      </div>
+
+      <div class="fadeout"></div>
+    </div>
+
+    <audio id="sfx-chime"  data-start="0.35" data-duration="2.0" data-track-index="3" src="assets/chime.wav"  data-volume="0.5"></audio>
+    <audio id="sfx-whoosh" data-start="3.7"  data-duration="0.6" data-track-index="4" src="assets/whoosh.wav" data-volume="0.3"></audio>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.fromTo("#scene", { opacity: 0 }, { opacity: 1, duration: 0.45, ease: "power1.out" }, 0);
+      tl.fromTo(".glow", { scale: 0.72, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.6, ease: "power2.out" }, 0.1);
+
+      // Wordmark rises with overshoot, per-letter
+      tl.fromTo(".mark span",
+        { y: 110, opacity: 0, scale: 1.24 },
+        { y: 0, opacity: 1, scale: 1, duration: 0.6, ease: "back.out(1.8)", stagger: 0.045 },
+        0.3);
+
+      tl.fromTo(".built", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 1.15);
+      tl.fromTo(".repo",  { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5,  ease: "power3.out" }, 1.4);
+      tl.fromTo(".rule",  { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.55, ease: "power2.out" }, 1.6);
+
+      // Gentle hold float (bounded)
+      tl.to(".card", { y: -8, duration: 0.9, ease: "sine.inOut", yoyo: true, repeat: 1 }, 1.9);
+
+      // Fade to black
+      tl.to(".fadeout", { opacity: 1, duration: 0.9, ease: "power1.in" }, 3.85);
+
+      window.__timelines["root"] = tl;
+    </script>
+  </div>
+</body>
+</html>
