@@ -203,6 +203,8 @@ def main() -> int:
            f"--codec h264 --timeout 120000{conc} --log info", cwd=composer)
 
     # 5b. HyperFrames intro + outro, then concat into ONE video.
+    #     Failures here (missing Chrome libs, runtime quirks) must NOT lose
+    #     the rendered body — fall back to a body-only final and QC it.
     final = body
     use_hf = not args.skip_hyperframes
     if use_hf and node_major() < 22:
@@ -212,24 +214,37 @@ def main() -> int:
         use_hf = False
 
     if use_hf:
-        with stage("5c_hyperframes_intro_outro"):
-            gsap_src = HYPERFRAMES_TEMPLATES / "assets" / "gsap.min.js"
-            audio_src = composer / "public" / "audio"
-            intro = out_dir / "intro.mp4"
-            outro = out_dir / "outro.mp4"
-            render_hyperframes(out_dir, "intro",
-                               ["riser.wav", "impact.wav", "whoosh.wav"], intro,
-                               gsap_src, audio_src)
-            render_hyperframes(out_dir, "outro",
-                               ["chime.wav", "whoosh.wav"], outro,
-                               gsap_src, audio_src)
-            print("intro", round(duration(intro), 2), "s / outro", round(duration(outro), 2), "s")
-        with stage("5d_concat"):
-            final = out_dir / f"{args.name}.mp4"
-            concat_videos([intro, body, outro], final)
-            timing["hyperframes_intro_s"] = round(duration(intro), 2)
-            timing["hyperframes_outro_s"] = round(duration(outro), 2)
-    else:
+        try:
+            with stage("5c_hyperframes_intro_outro"):
+                gsap_src = HYPERFRAMES_TEMPLATES / "assets" / "gsap.min.js"
+                audio_src = composer / "public" / "audio"
+                intro = out_dir / "intro.mp4"
+                outro = out_dir / "outro.mp4"
+                render_hyperframes(out_dir, "intro",
+                                   ["riser.wav", "impact.wav", "whoosh.wav"], intro,
+                                   gsap_src, audio_src)
+                render_hyperframes(out_dir, "outro",
+                                   ["chime.wav", "whoosh.wav"], outro,
+                                   gsap_src, audio_src)
+                print("intro", round(duration(intro), 2), "s / outro", round(duration(outro), 2), "s")
+            with stage("5d_concat"):
+                final = out_dir / f"{args.name}.mp4"
+                concat_videos([intro, body, outro], final)
+                timing["hyperframes_intro_s"] = round(duration(intro), 2)
+                timing["hyperframes_outro_s"] = round(duration(outro), 2)
+        except (SystemExit, RuntimeError, OSError) as e:
+            print("\n" + "!" * 78, flush=True)
+            print(f"WARNING: HyperFrames stage failed — delivering the Remotion body "
+                  f"WITHOUT intro/outro. The body itself is complete and correct.\n"
+                  f"Reason: {e}\n"
+                  f"Kaggle fix: sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 "
+                  f"libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libatspi2.0-0 "
+                  f"libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 "
+                  f"libpango-1.0-0 libcairo2 libasound2", flush=True)
+            print("!" * 78 + "\n", flush=True)
+            use_hf = False
+
+    if not use_hf:
         final = out_dir / f"{args.name}.mp4"
         if final != body and not final.exists():
             shutil.copy(body, final)
