@@ -9,6 +9,8 @@ No network, no librosa, no LLM required.
 from __future__ import annotations
 
 import json
+import pytest
+import shutil
 import sys
 from pathlib import Path
 
@@ -113,19 +115,53 @@ def _clips_and_groups():
     return clips, groups
 
 
-def test_timeline_fits_narration_and_is_sequential():
+def test_timeline_fits_narration_with_source_trim_semantics():
+    """in/out are a SOURCE trim window (not cumulative timeline positions)."""
     clips, groups = _clips_and_groups()
     result = StorylineTimeline().execute({
         "clips": clips, "groups": groups, "group_margin_seconds": 0.0,
     })
     assert result.success, result.error
     cuts = result.data["edit_decisions"]["cuts"]
-    # narration-fitted group: 2 clips share 5s proportionally
-    assert cuts[0]["in_seconds"] == 0.0 and cuts[0]["out_seconds"] == 2.5
-    assert cuts[1]["in_seconds"] == 2.5 and cuts[1]["out_seconds"] == 5.0
-    # unfitted group keeps source duration
-    assert cuts[2]["in_seconds"] == 5.0 and cuts[2]["out_seconds"] == 9.0
+    # narration-fitted group: 2 clips share 5s proportionally, each trimmed from its own start
+    assert (cuts[0]["in_seconds"], cuts[0]["out_seconds"]) == (0.0, 2.5)
+    assert (cuts[1]["in_seconds"], cuts[1]["out_seconds"]) == (0.0, 2.5)
+    # unfitted group keeps the clip's own duration
+    assert (cuts[2]["in_seconds"], cuts[2]["out_seconds"]) == (0.0, 4.0)
     assert result.data["total_duration_seconds"] == 9.0
+    # every cut stays inside its source clip (the old bug seeked past the end)
+    lengths = {c["source"]: 10.0 for c in clips[:2]} | {"asset-c": 4.0}
+    for cut in cuts:
+        assert cut["out_seconds"] <= lengths[cut["source"]] + 1e-6
+
+
+def test_timeline_sets_renderer_family_and_carries_audio():
+    clips, groups = _clips_and_groups()
+    audio = {"music": {"asset_id": "bgm", "volume": 0.3}}
+    result = StorylineTimeline().execute({"clips": clips, "groups": groups, "audio": audio})
+    ed = result.data["edit_decisions"]
+    assert ed["renderer_family"] == "documentary-montage"  # video_compose render blocks without it
+    assert ed["audio"] == audio
+
+
+def test_timeline_rejects_hyperframes_runtime():
+    clips, groups = _clips_and_groups()
+    result = StorylineTimeline().execute({"clips": clips, "groups": groups, "render_runtime": "hyperframes"})
+    assert not result.success and "HyperFrames" in result.error
+
+
+def test_timeline_slows_short_clip_and_floors_speed():
+    clips = [{"id": "s", "source": "s.mp4", "duration_seconds": 2.0, "type": "video"},
+             {"id": "t", "source": "t.mp4", "duration_seconds": 1.0, "type": "video"}]
+    groups = [{"group_id": "g1", "clip_ids": ["s"], "narration_duration_seconds": 3.6},
+              {"group_id": "g2", "clip_ids": ["t"], "narration_duration_seconds": 4.6}]
+    result = StorylineTimeline().execute({"clips": clips, "groups": groups, "group_margin_seconds": 0.4})
+    assert result.success, result.error
+    c0, c1 = result.data["edit_decisions"]["cuts"]
+    assert c0["speed"] == 0.5 and (c0["in_seconds"], c0["out_seconds"]) == (0.0, 2.0)  # shown 4.0s
+    assert c1["speed"] == 0.5 and c1["out_seconds"] == 1.0                              # floored
+    assert any("too short" in w for w in result.data["warnings"])                        # shortfall is reported
+    assert result.data["total_duration_seconds"] == 6.0                                  # 4.0 + 2.0 (honest total)
 
 
 def test_timeline_output_matches_edit_decisions_schema():
@@ -142,15 +178,19 @@ def test_timeline_output_matches_edit_decisions_schema():
     jsonschema.validate(result.data["edit_decisions"], schema)
 
 
-def test_timeline_rejects_ungrouped_clips():
+def test_timeline_rejects_ungrouped_unknown_and_repeated_clips():
     clips, groups = _clips_and_groups()
-    groups = [groups[0]]  # clip c ungrouped
-    result = StorylineTimeline().execute({"clips": clips, "groups": groups})
-    assert not result.success
-    assert "not assigned" in (result.error or "")
+    r = StorylineTimeline().execute({"clips": clips, "groups": [groups[0]]})
+    assert not r.success and "not assigned" in r.error
+    bad = [dict(groups[0], clip_ids=["a", "b", "typo"]), groups[1]]
+    r = StorylineTimeline().execute({"clips": clips, "groups": bad})
+    assert not r.success and "unknown clip ids" in r.error and "typo" in r.error
+    dup = [groups[0], dict(groups[1], clip_ids=["c", "a"])]
+    r = StorylineTimeline().execute({"clips": clips, "groups": dup})
+    assert not r.success and "more than one group" in r.error
 
 
-def test_timeline_snaps_boundaries_to_beats():
+def test_timeline_snaps_boundaries_to_beats_and_keeps_total():
     clips, groups = _clips_and_groups()
     result = StorylineTimeline().execute({
         "clips": clips, "groups": groups, "group_margin_seconds": 0.0,
@@ -158,8 +198,75 @@ def test_timeline_snaps_boundaries_to_beats():
     })
     assert result.success, result.error
     cuts = result.data["edit_decisions"]["cuts"]
-    assert cuts[0]["out_seconds"] == 2.6   # 2.5 snapped to 2.6 beat
-    assert cuts[1]["in_seconds"] == 2.6    # next cut follows the snap
+    shown = [round((c["out_seconds"] - c["in_seconds"]) / c.get("speed", 1.0), 3) for c in cuts]
+    assert shown == [2.6, 2.6, 3.8]                       # boundaries at 2.6 and 5.2
+    assert result.data["total_duration_seconds"] == 9.0   # snapping never changes the length
+    assert [b["snapped_ms"] for b in result.data["snapped_boundaries"]] == [2600.0, 5200.0]
+
+
+def test_beat_snap_never_creates_cuts_shorter_than_minimum():
+    clips = [{"id": f"k{i}", "source": f"k{i}", "duration_seconds": 5.0, "type": "video"} for i in range(3)]
+    result = StorylineTimeline().execute({
+        "clips": clips, "groups": [{"group_id": "g", "clip_ids": ["k0", "k1", "k2"],
+                                    "narration_duration_seconds": 6.0}],
+        "group_margin_seconds": 0.0, "beats_ms": [100.0, 150.0], "beat_threshold_ms": 5000,
+        "min_clip_duration_seconds": 1.0,
+    })
+    assert result.success, result.error
+    for cut in result.data["edit_decisions"]["cuts"]:
+        assert cut["out_seconds"] - cut["in_seconds"] >= 1.0 - 1e-6
+
+
+def test_voiceover_first_windows_tile_the_users_voiceover():
+    clips = [{"id": "a", "source": "a", "duration_seconds": 10.0, "type": "video"},
+             {"id": "b", "source": "b", "duration_seconds": 10.0, "type": "video"},
+             {"id": "c", "source": "c", "duration_seconds": 10.0, "type": "video"}]
+    groups = [{"group_id": "hook", "clip_ids": ["a"], "narration_start_seconds": 0.6},
+              {"group_id": "mid", "clip_ids": ["b"], "narration_start_seconds": 4.0},
+              {"group_id": "close", "clip_ids": ["c"], "narration_start_seconds": 9.0}]
+    result = StorylineTimeline().execute({
+        "clips": clips, "groups": groups, "voiceover_duration_seconds": 12.0,
+        "voiceover_path": "/does/not/exist.mp3"})
+    assert result.success, result.error
+    spans = [(g["start_seconds"], g["end_seconds"]) for g in result.data["groups"]]
+    assert spans == [(0.0, 4.0), (4.0, 9.0), (9.0, 12.0)]      # lead-in folded into the first group
+    assert result.data["total_duration_seconds"] == 12.0
+    assert result.data["compose_hints"]["audio_path"] == "/does/not/exist.mp3"
+    assert result.data["edit_decisions"]["metadata"]["voiceover_first"] is True
+
+
+def test_voiceover_first_needs_a_known_end():
+    clips = [{"id": "a", "source": "a", "duration_seconds": 5.0, "type": "video"}]
+    groups = [{"group_id": "g", "clip_ids": ["a"], "narration_start_seconds": 0.0}]
+    result = StorylineTimeline().execute({"clips": clips, "groups": groups})
+    assert not result.success and "end" in result.error
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg required")
+def test_timeline_renders_with_expected_duration_through_video_compose(tmp_path):
+    """End-to-end regression: the old output rendered 4s instead of 8.8s."""
+    import subprocess
+    from tools.video.video_compose import VideoCompose
+
+    paths = []
+    for i in range(3):
+        p = tmp_path / f"clip{i}.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                        "testsrc2=size=320x180:rate=30:duration=4", "-pix_fmt", "yuv420p", str(p)], check=True)
+        paths.append(str(p))
+    clips = [{"id": f"c{i}", "source": paths[i], "duration_seconds": 4, "type": "video"} for i in range(3)]
+    groups = [{"group_id": "a", "clip_ids": ["c0", "c1"], "narration_duration_seconds": 5},
+              {"group_id": "b", "clip_ids": ["c2"], "narration_duration_seconds": 3}]
+    plan = StorylineTimeline().execute({"clips": clips, "groups": groups, "render_runtime": "ffmpeg"})
+    assert plan.success, plan.error
+    out = tmp_path / "out.mp4"
+    res = VideoCompose().execute({"operation": "render", "edit_decisions": plan.data["edit_decisions"],
+                                  "asset_manifest": {"version": "1.0", "assets": []},
+                                  "output_path": str(out)})
+    assert res.success, res.error
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                str(out)], capture_output=True, text=True).stdout)
+    assert abs(dur - plan.data["total_duration_seconds"]) < 0.4
 
 
 # ---------------- ai_transition_plan ----------------
@@ -180,3 +287,64 @@ def test_transition_plan_only_between_groups_and_warns_on_aspect():
     assert reqs[0]["aspect_compatible"] is False  # 16:9 -> 9:16
     assert result.data["warnings"]
     assert "video_selector" in reqs[0]["execute_with"]
+
+
+def test_transition_plan_names_the_bridging_frames():
+    clips = [{"id": "a", "source": "a.mp4", "group_id": "g1"}, {"id": "b", "source": "b.mp4", "group_id": "g2"}]
+    req = AiTransitionPlan().execute({"clips": clips}).data["transition_requests"][0]
+    assert req["first_frame_position"] == "last_frame" and req["last_frame_position"] == "first_frame"
+
+
+# ---------------- regressions found in the audit ----------------
+
+def test_rough_cut_respects_units_per_key():
+    base = [("hello there", 0, 2000), ("um", 2100, 2500), ("this is the plan", 3000, 5000)]
+    ms = [{"text": t, "start_ms": a, "end_ms": b} for t, a, b in base]
+    sec = [{"text": t, "start_seconds": a / 1000, "end_seconds": b / 1000} for t, a, b in base]
+    bare_s = [{"text": t, "start": a / 1000, "end": b / 1000} for t, a, b in base]
+    bare_ms = [{"text": t, "start": a, "end": b} for t, a, b in base]
+    results = [
+        SpeechRoughCut().execute({"segments": ms}),                       # default time_unit used to inflate 1000x
+        SpeechRoughCut().execute({"segments": sec}),
+        SpeechRoughCut().execute({"segments": bare_s}),
+        SpeechRoughCut().execute({"segments": bare_ms, "time_unit": "ms"}),
+    ]
+    for r in results:
+        assert r.success, r.error
+        assert r.data["original_duration_ms"] == 5000.0
+        assert r.data["kept_ranges_ms"][-1]["end_ms"] < 5200   # nothing inflated
+
+
+def test_storyline_edit_has_a_delivery_promise_and_is_documented():
+    from lib.delivery_promise import PromiseType, classify_from_brief
+
+    assert classify_from_brief("storyline-edit", {}).promise_type == PromiseType.SOURCE_LED
+    root = Path(__file__).resolve().parent.parent.parent
+    for doc in ("AGENT_GUIDE.md", "PROJECT_CONTEXT.md", "skills/INDEX.md", "docs/ARCHITECTURE.md", "README.md"):
+        assert "storyline-edit" in (root / doc).read_text(encoding="utf-8"), f"{doc} must list storyline-edit"
+
+
+def test_storyline_tools_are_discoverable_by_the_registry():
+    from tools.tool_registry import registry
+
+    registry.discover()
+    for name in ("speech_rough_cut", "bgm_beat_sync", "storyline_timeline", "ai_transition_plan"):
+        assert registry.get(name) is not None, name
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg required")
+def test_beat_analysis_finds_a_120bpm_click_track(tmp_path):
+    librosa = pytest.importorskip("librosa")
+    import numpy as np
+    import soundfile as sf
+
+    sr = 22050
+    y = np.zeros(sr * 8, dtype="float32")
+    for k in range(16):                       # a click every 500 ms
+        i = int(k * 0.5 * sr)
+        y[i:i + 200] = np.hanning(200).astype("float32")
+    wav = tmp_path / "clicks.wav"
+    sf.write(str(wav), y, sr)
+    data = BgmBeatSync.analyze_beats(wav)
+    assert 110 <= data["bpm"] <= 130 or 55 <= data["bpm"] <= 65 or 230 <= data["bpm"] <= 250
+    assert data["beats_ms"], "no accent beats found"

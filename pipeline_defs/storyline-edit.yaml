@@ -8,6 +8,8 @@ description: >
   groups, fits the timeline to narration and BGM beats, and renders with the
   locked OpenMontage runtime. Use when the user brings footage to edit, NOT
   for fully generated videos (use cinematic / animated-explainer instead).
+  Works with generated narration OR the user's own voiceover (voiceover-first).
+  Render runtimes: remotion or ffmpeg (HyperFrames cannot offset into footage).
 category: custom
 stability: beta
 default_checkpoint_policy: guided
@@ -65,7 +67,8 @@ stages:
       - Every source clip is inventoried with a caption and duration
       - Speech footage is rough-cut (filler/repeats/agent-marked cuts) before grouping
       - Clips are assigned to narrative groups (hook/setup/development/climax/close)
-      - Both render runtimes are presented when both are available, and render_runtime is locked with a logged decision
+      - Remotion and FFmpeg (the supported runtimes) are presented when available, and render_runtime is locked with a logged decision
+      - If the user brought a voiceover it is transcribed and grouped by sentence (voiceover-first), not replaced with TTS
     success_criteria:
       - Schema-valid brief artifact
       - Clip inventory covers 100% of source media
@@ -124,7 +127,7 @@ stages:
     checkpoint_required: true
     human_approval_default: false
     review_focus:
-      - Narration is generated per group so group durations are real, not guessed
+      - Narration durations are real, not guessed (generated per group with TTS, or measured from the user's own voiceover)
       - One BGM track is chosen and beat-analyzed (bgm_beat_sync) before edit
       - AI transitions are planned only if the delivery promise justifies the cost; generate one and review before batching
     success_criteria:
@@ -161,7 +164,6 @@ stages:
       - render_report
     tools_available:
       - video_compose
-      - hyperframes_compose
       - audio_mixer
     checkpoint_required: true
     human_approval_default: false

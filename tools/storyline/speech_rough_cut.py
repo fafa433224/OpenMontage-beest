@@ -201,15 +201,27 @@ class SpeechRoughCut(BaseTool):
     # ---- Tool execution ----
 
     def _normalize_segments(self, inputs: dict[str, Any]) -> list[dict]:
-        scale = 1000.0 if inputs.get("time_unit", "seconds") == "seconds" else 1.0
+        # Unit is decided per key: *_ms is always ms, *_seconds is always
+        # seconds; only the bare start/end keys follow ``time_unit``. (Before
+        # this fix, start_ms values were also multiplied by 1000 under the
+        # default time_unit, turning a 5 s clip into 5,000 s.)
+        bare_scale = 1000.0 if inputs.get("time_unit", "seconds") == "seconds" else 1.0
+
+        def to_ms(seg: dict, ms_key: str, sec_key: str, bare_key: str) -> float:
+            if seg.get(ms_key) is not None:
+                return float(seg[ms_key])
+            if seg.get(sec_key) is not None:
+                return float(seg[sec_key]) * 1000.0
+            return float(seg.get(bare_key, 0) or 0) * bare_scale
+
         normalized = []
         for seg in inputs.get("segments") or []:
-            start = seg.get("start_ms", seg.get("start_seconds", seg.get("start", 0)))
-            end = seg.get("end_ms", seg.get("end_seconds", seg.get("end", 0)))
+            start = to_ms(seg, "start_ms", "start_seconds", "start")
+            end = to_ms(seg, "end_ms", "end_seconds", "end")
             normalized.append({
                 "text": seg.get("text", ""),
-                "start_ms": float(start) * scale,
-                "end_ms": float(end) * scale,
+                "start_ms": start,
+                "end_ms": end,
                 "keep": seg.get("keep"),
                 "drop": bool(seg.get("drop", False)) or seg.get("action") == "cut",
             })
@@ -304,7 +316,7 @@ class SpeechRoughCut(BaseTool):
                 self.run_command([
                     "ffmpeg", "-y", "-ss", f"{r['start_ms'] / 1000:.3f}",
                     "-to", f"{r['end_ms'] / 1000:.3f}", "-i", str(input_path),
-                    "-c:v", "libx264", "-c:a", "aac", str(seg_path),
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(seg_path),
                 ], timeout=600)
                 lines.append(f"file '{seg_path}'")
             list_file.write_text("\n".join(lines), encoding="utf-8")

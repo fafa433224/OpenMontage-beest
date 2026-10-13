@@ -121,8 +121,12 @@ class AiTransitionPlan(BaseTool):
                 "id": f"transition-{len(requests) + 1:03d}",
                 "from_clip": a.get("id"),
                 "to_clip": b.get("id"),
+                # Frame-bridging: the generated clip STARTS on A's last frame and
+                # ENDS on B's first frame. Extract those stills (ffmpeg) first.
                 "first_frame_source": a.get("source", a.get("id")),
+                "first_frame_position": "last_frame",
                 "last_frame_source": b.get("source", b.get("id")),
+                "last_frame_position": "first_frame",
                 "duration_seconds": duration,
                 "aspect_compatible": compatible,
                 "prompt": (

@@ -219,6 +219,7 @@ def classify_from_brief(
         "localization-dub": PromiseType.LOCALIZATION,
         "podcast-repurpose": PromiseType.SOURCE_LED,
         "clip-factory": PromiseType.SOURCE_LED,
+        "storyline-edit": PromiseType.SOURCE_LED,
     }
 
     promise_type = pipeline_defaults.get(pipeline_type, PromiseType.HYBRID)

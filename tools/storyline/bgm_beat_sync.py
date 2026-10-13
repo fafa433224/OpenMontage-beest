@@ -45,7 +45,7 @@ class BgmBeatSync(BaseTool):
     execution_mode = ExecutionMode.SYNC
     determinism = Determinism.DETERMINISTIC
 
-    dependencies = []  # librosa is optional; only `analyze` needs it
+    dependencies = []  # librosa ships in requirements.txt; `snap` works without it
     install_instructions = (
         "Beat analysis needs librosa: pip install librosa. "
         "The `snap` operation works without it (pass beats explicitly)."
@@ -125,9 +125,9 @@ class BgmBeatSync(BaseTool):
         if y.size < 2048:
             raise RuntimeError("The selected background music is too short.")
 
-        onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=2048)
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=512)
         bpm, beat_frames = librosa.beat.beat_track(
-            onset_envelope=onset_env, sr=sr, hop_length=2048, units="frames")
+            onset_envelope=onset_env, sr=sr, hop_length=512, units="frames")
         bpm_val = float(np.atleast_1d(bpm)[0])
         beat_frames = np.asarray(beat_frames, dtype=int)
 
@@ -148,9 +148,9 @@ class BgmBeatSync(BaseTool):
                           (i == len(strengths_arr) - 1 or s >= strengths_arr[i + 1])
                 if s >= threshold and is_peak:
                     accent_times.append(float(librosa.frames_to_time(
-                        beat_frames[i], sr=sr, hop_length=2048) * 1000))
+                        beat_frames[i], sr=sr, hop_length=512) * 1000))
 
-        rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=2048)[0]
+        rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
         return {
             "path": str(audio_path),
             "duration_ms": duration_ms,

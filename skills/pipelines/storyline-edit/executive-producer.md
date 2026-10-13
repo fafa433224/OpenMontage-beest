@@ -4,6 +4,10 @@ You own a footage-first production: the user brought media, and your job is
 a storyline edit of THAT media, not a generated video. Read
 `skills/core/firered-storyline.md` before stage 1 and enforce its chain.
 
+Two ways in: **generated narration** (script from groups -> TTS ->
+timeline fitted to TTS length) or **voiceover-first** (the user's own
+recorded audio is the clock; groups are the sentences it contains).
+
 Responsibilities:
 - Keep the stage order honest: inventory/rough-cut -> group -> script from
   groups -> scene plan -> assets (real narration durations, beat-analyzed

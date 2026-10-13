@@ -280,6 +280,20 @@ Stage director skills teach the agent HOW to execute each pipeline stage. Each s
 | Compose Director | `pipelines/localization-dub/compose-director.md` | `compose` | Per-locale rendering, subtitle-fit checks, output labeling |
 | Publish Director | `pipelines/localization-dub/publish-director.md` | `publish` | Locale packaging, metadata precision, QA-note retention |
 
+### Storyline Edit Pipeline (`pipelines/storyline-edit/`) — beta
+
+| Skill | File | Stage | Key Capabilities |
+|-------|------|-------|-----------------|
+| **FireRed Storyline (core)** | `core/firered-storyline.md` | `all` | **Director chain, voiceover-first mode, edit_decisions source-trim contract** |
+| **Executive Producer** | `pipelines/storyline-edit/executive-producer.md` | `all` | Stage order, paid-upgrade guard, generated vs. voiceover-first |
+| Idea Director | `pipelines/storyline-edit/idea-director.md` | `idea` | Inventory, speech rough cut, grouping, runtime lock (remotion/ffmpeg) |
+| Script Director | `pipelines/storyline-edit/script-director.md` | `script` | One script block per clip group |
+| Scene Director | `pipelines/storyline-edit/scene-director.md` | `scene_plan` | Clip order per group, hero holds |
+| Asset Director | `pipelines/storyline-edit/asset-director.md` | `assets` | TTS or user voiceover measurements, beat-analyzed BGM, optional AI transitions |
+| Edit Director | `pipelines/storyline-edit/edit-director.md` | `edit` | `storyline_timeline` -> schema-valid edit_decisions |
+| Compose Director | `pipelines/storyline-edit/compose-director.md` | `compose` | `video_compose render`, voiceover mux |
+| Publish Director | `pipelines/storyline-edit/publish-director.md` | `publish` | Export bundle, save style skill |
+
 ## Meta Skills
 
 Cross-cutting skills that apply to all pipelines:

@@ -39,7 +39,7 @@ deterministic steps by hand.
                       Generation costs money: plan all, generate ONE,
                       review, then batch.
 9. Compose & publish  tools: video_compose with the render_runtime locked
-                      at proposal (remotion | hyperframes | ffmpeg).
+                      at proposal (remotion | ffmpeg — never hyperframes here).
                       FireRed's MoviePy renderer is NOT used in OpenMontage.
 ```
 
@@ -56,6 +56,30 @@ deterministic steps by hand.
   say so in the decision log; unsnapped is the honest default.
 - **AI transitions are a paid upgrade, not a default.** The
   `delivery_promise` must justify them before `ai_transition_plan` runs.
+
+## Voiceover-first (the user brings their own narration)
+
+1. `transcriber` on the voiceover -> sentences with timestamps.
+2. Group the sentences into story beats; for each beat note the time its
+   first sentence starts (`narration_start_seconds`).
+3. Assign clips to beats exactly as in step 5 above.
+4. `storyline_timeline` with `groups[].narration_start_seconds`,
+   `voiceover_path` and `voiceover_duration_seconds`. Each group's window
+   runs from its start to the next group's start; the first group also
+   covers any lead-in; the last runs to the end of the audio.
+5. Compose with `audio_path = compose_hints.audio_path`.
+
+If a clip is too short for its window it is slowed down to
+`min_playback_speed` (default 0.5) and the tool warns that sync will drift:
+fix that with more B-roll, not by hand-editing cut times.
+
+## edit_decisions contract (do not break)
+
+For video, `in_seconds`/`out_seconds` is a **source trim window** and the cut
+is shown for `(out - in) / speed` seconds. This matches `video_compose`
+(ffmpeg), the Remotion CinematicRenderer adapter and documentary-montage.
+HyperFrames reads these fields as timeline positions and cannot offset into
+footage, which is why this pipeline does not use it.
 
 ## Saving a style for reuse
 

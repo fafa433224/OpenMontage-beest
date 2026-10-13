@@ -373,6 +373,7 @@ Each pipeline is a complete production workflow, from idea to finished video.
 | **Documentary Montage** | Thematic montage cut from a CLIP-indexed corpus of free stock footage and open archives (Pexels, Archive.org, NASA, Wikimedia, Unsplash) | Video essays, mood pieces, retrieval-first B-roll edits, real-footage videos without paid generation APIs |
 | **Hybrid** | Source footage + AI-generated support visuals | Enhancing existing footage with graphics |
 | **Localization & Dub** | Subtitle, dub, and translate existing video | Multi-language distribution |
+| **Storyline Edit** (`storyline-edit`) | A story edited from *your* footage and photos, cut to generated narration or **your own voiceover**, with speech rough-cut and beat-synced music (FireRed-OpenStoryline director chain) | Vlogs, travel and event edits, voiceover-led videos from your own clips |
 | **Podcast Repurpose** | Podcast highlights to video | Podcast marketing, audiogram videos |
 | **Screen Demo** | Polished software screen recordings and walkthroughs | Product demos, tutorials, documentation |
 | **Talking Head** | Footage-led speaker videos | Presentations, vlogs, interviews |

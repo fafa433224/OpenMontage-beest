@@ -213,6 +213,7 @@ stages:
 | `clip-factory` | custom | Batch short-form clips from long source |
 | `hybrid` | hybrid | Source footage + AI-generated support visuals |
 | `localization-dub` | custom | Subtitle, dub, and translate existing video |
+| `storyline-edit` | custom | Footage-first storyline edit: group clips into a story, fit to narration or the user's voiceover and BGM beats |
 | `podcast-repurpose` | hybrid | Podcast highlights to video |
 | `screen-demo` | screen_recording | Software screen recordings and walkthroughs |
 | `talking-head` | talking_head | Footage-led speaker videos |

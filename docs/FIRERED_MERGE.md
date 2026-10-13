@@ -82,3 +82,27 @@ storyline-edit pipeline
 - The storyline pipeline is `stability: beta` until it has real-footage
   productions through it; expect pacing defaults (margins, min clip
   duration) to be tuned by early use.
+
+## Audit fixes (post-merge)
+
+An in-depth audit of the first merge found and fixed these problems. Each
+has a regression test in `tests/tools/test_storyline_tools.py`.
+
+| # | Problem | Impact | Fix |
+|---|---------|--------|-----|
+| 1 | `storyline_timeline` emitted cumulative **timeline** positions in `in_seconds`/`out_seconds`; ffmpeg `video_compose`, the Remotion CinematicRenderer adapter and documentary-montage read them as a **source trim window** | A 3-clip, 8.8 s edit rendered as 4.0 s and still reported success; later clips seeked past the end of their source | Cuts are now source trims with `speed`; shown length is `(out-in)/speed`. End-to-end ffmpeg render test added |
+| 2 | Output had no `renderer_family` | `video_compose render` blocks without it, so the pipeline could not render | Emitted (default `documentary-montage`), validated against the schema enum |
+| 3 | `speech_rough_cut` multiplied `start_ms`/`end_ms` by 1000 under the default `time_unit` | Millisecond transcripts were cut at 1000x the real time | Unit is decided per key (`*_ms`, `*_seconds`, bare keys follow `time_unit`) |
+| 4 | Slow-down had no floor and the shortfall was silent | A 2 s clip stretched over 20 s played at 0.1x | `min_playback_speed` (default 0.5); the tool warns when a clip is too short |
+| 5 | Beat snapping could create zero/negative-length or reordered cuts, and worked on the wrong time base | Broken timelines on busy beat grids | Snapping happens in timeline time, respects `min_clip_duration_seconds`, never reorders, keeps total length |
+| 6 | Unknown clip ids in a group were silently dropped; a clip in two groups was silently ignored | Typos hid missing footage | Both are hard errors |
+| 7 | No audio/subtitles pass-through; no way to use the user's own voiceover | Rendered video had no narration or music | `audio`/`subtitles` pass-through; **voiceover-first** mode (`narration_start_seconds`, `voiceover_path`) and `compose_hints.audio_path` |
+| 8 | HyperFrames was offered but cannot offset into footage | Wrong render on that runtime | Rejected with a clear message; pipeline skills/manifest now say remotion or ffmpeg |
+| 9 | `storyline-edit` had no delivery-promise mapping (fell back to HYBRID) | Wrong promise rules for a footage-first edit | Mapped to `SOURCE_LED` |
+| 10 | Pipeline was not listed in AGENT_GUIDE, PROJECT_CONTEXT, skills/INDEX, ARCHITECTURE or README | A fresh agent would never choose it | Listed everywhere; a test keeps them in sync |
+| 11 | `librosa` missing from requirements; beat grid used a 93 ms hop | `bgm_beat_sync` was DEGRADED; beats were coarse | Added to `requirements.txt`; hop reduced to 512 (23 ms) |
+| 12 | `ai_transition_plan` did not say which frames bridge two clips | Agent could feed whole clips as frames | Request now names `last_frame` of A and `first_frame` of B |
+
+Not changed: HyperFrames footage-offset support (would need work in
+`hyperframes_compose`), and FireRed-Image-Edit (image-editing model) is not
+part of this merge.
