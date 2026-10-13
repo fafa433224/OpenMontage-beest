@@ -37,6 +37,7 @@ import logging
 import secrets
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -53,6 +54,21 @@ from tools.base_tool import (
     ToolStability,
     ToolTier,
 )
+
+
+# Remotion keeps its entire working set under the system temp dir (honours
+# TMPDIR): downloaded copies of every source asset, the extracted frame cache
+# (one image per output frame), audio preprocessing/mixing WAVs and the
+# headless-Chrome profile. A one-minute 1080p project can consume several
+# hundred MB there. When that filesystem runs dry mid-render, Remotion reports
+# the deeply misleading compositor error
+#
+#     "No frame found at position <N> for source <asset>"
+#
+# where N wanders between runs and the named asset is simply whichever one was
+# being extracted when the write/read failed. Warn before rendering when the
+# margin is thin instead of letting the creator burn renders re-encoding clips.
+_MIN_REMOTION_TEMP_FREE_MB = 1024
 
 
 class VideoCompose(BaseTool):
@@ -1668,6 +1684,11 @@ class VideoCompose(BaseTool):
             # would only take effect on a direct _remotion_render() call.
             if inputs.get("remotion_timeout_ms") is not None:
                 remotion_inputs["remotion_timeout_ms"] = inputs["remotion_timeout_ms"]
+            # Forward render options (e.g. `concurrency`) as well. Options that
+            # are only read by _remotion_render() must survive this rebuilt
+            # dict, otherwise a caller-supplied value silently has no effect.
+            if inputs.get("options") is not None:
+                remotion_inputs["options"] = inputs["options"]
             if inputs.get("public_dir") is not None:
                 remotion_inputs["public_dir"] = inputs["public_dir"]
             render_result = self._remotion_render(remotion_inputs)
@@ -1941,6 +1962,18 @@ class VideoCompose(BaseTool):
 
         return render_result
 
+    @staticmethod
+    def _remotion_temp_free_mb() -> Optional[int]:
+        """Free megabytes in the temp dir Remotion will use (honours TMPDIR).
+
+        Returns None when the path cannot be inspected (e.g. disk usage query
+        unsupported), so callers can treat "unknown" separately from "empty".
+        """
+        try:
+            return int(shutil.disk_usage(tempfile.gettempdir()).free // (1024 * 1024))
+        except OSError:
+            return None
+
     def _remotion_render(self, inputs: dict[str, Any]) -> ToolResult:
         """Render via Remotion (requires Node.js + npx).
 
@@ -2062,6 +2095,19 @@ class VideoCompose(BaseTool):
             if public_dir is not None:
                 cmd.append(f"--public-dir={public_dir}")
 
+            # Optional render concurrency. The atelier path already forwards
+            # `concurrency`; the templated path needs it too — offthread frame
+            # extraction from many video sources in parallel is a common cause
+            # of compositor "No frame found" failures on CPU/RAM-constrained
+            # machines, and pinning concurrency is the standard mitigation.
+            options = inputs.get("options") or composition_data.get("options") or {}
+            concurrency = options.get("concurrency") or composition_data.get("concurrency")
+            if concurrency:
+                try:
+                    cmd.append(f"--concurrency={int(concurrency)}")
+                except (TypeError, ValueError):
+                    pass
+
             # Apply media profile dimensions
             if profile_name:
                 try:
@@ -2087,6 +2133,21 @@ class VideoCompose(BaseTool):
                 except (TypeError, ValueError):
                     pass
 
+            # Preflight: Remotion's temp dir holds staged media copies, the
+            # per-frame cache and audio preprocessing output. A nearly-full
+            # temp filesystem dies mid-render with an opaque "No frame found"
+            # compositor error, so surface the real constraint up front.
+            temp_free_mb = self._remotion_temp_free_mb()
+            if temp_free_mb is not None and temp_free_mb < _MIN_REMOTION_TEMP_FREE_MB:
+                logging.getLogger(__name__).warning(
+                    "Remotion temp dir %s has only %d MB free; a full render "
+                    "typically needs several hundred MB. If the render fails "
+                    "with 'No frame found at position N', point TMPDIR at a "
+                    "larger filesystem and re-run.",
+                    tempfile.gettempdir(),
+                    temp_free_mb,
+                )
+
             # Invoke from inside the composer dir so npx can resolve the
             # local remotion binary via node_modules/.bin. Without this,
             # Windows npx cannot locate the CLI and returns "could not
@@ -2098,6 +2159,26 @@ class VideoCompose(BaseTool):
             # instead of the bare "returned non-zero exit status 1".
             detail = (e.stderr or e.stdout or "").strip()
             tail = "\n".join(detail.splitlines()[-25:]) if detail else "(no output captured)"
+            if "No frame found at position" in detail:
+                # The compositor blames an individual frame, but in practice
+                # this signature means a temp-file write/read failed — the
+                # wandering position and the single "guilty" asset are red
+                # herrings. Steer the creator at the actual lever.
+                free_mb = self._remotion_temp_free_mb()
+                free_note = (
+                    f"currently {free_mb} MB free"
+                    if free_mb is not None
+                    else "free space unknown"
+                )
+                tail += (
+                    "\n\nHint: 'No frame found' is usually a temp-filesystem problem, "
+                    "not a bad frame or a bad clip — the position varies between runs "
+                    "and the named source is only whichever asset was being extracted "
+                    "at the time. Remotion keeps staged media, the frame cache, audio "
+                    f"preprocessing and the Chrome profile under {tempfile.gettempdir()} "
+                    f"({free_note}). Point TMPDIR at a larger filesystem and re-run "
+                    "before re-encoding or re-trimming any source."
+                )
             return ToolResult(
                 success=False,
                 error=f"Remotion render failed (exit {e.returncode}):\n{tail}",

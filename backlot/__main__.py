@@ -1,7 +1,8 @@
 """Backlot CLI.
 
     python -m backlot open [project-id]   # start server if needed, open browser
-    python -m backlot serve [--port N]    # run the server in the foreground
+    python -m backlot serve [--port N] [--host H]
+                                          # run the server in the foreground
 
 ``open`` is idempotent and non-fatal by design: agents call it at pipeline
 initialization and must continue the production even if it fails.
@@ -25,6 +26,16 @@ def _port() -> int:
         return int(os.environ.get("BACKLOT_PORT", DEFAULT_PORT))
     except ValueError:
         return DEFAULT_PORT
+
+
+def _host() -> str:
+    """Bind address for the board server.
+
+    Defaults to loopback for local use. Containerised and remote setups
+    (sandboxes, devcontainers, reverse proxies) need the server to listen on
+    all interfaces, either via ``serve --host 0.0.0.0`` or ``BACKLOT_HOST``.
+    """
+    return os.environ.get("BACKLOT_HOST", "127.0.0.1")
 
 
 def _server_alive(port: int) -> bool:
@@ -79,10 +90,15 @@ def cmd_open(project_id: str | None) -> int:
     return 0
 
 
-def cmd_serve(port: int) -> int:
+def cmd_serve(port: int, host: str | None = None) -> int:
     import uvicorn
 
-    uvicorn.run("backlot.server:app", host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(
+        "backlot.server:app",
+        host=host or _host(),
+        port=port,
+        log_level="warning",
+    )
     return 0
 
 
@@ -95,12 +111,17 @@ def main(argv: list[str] | None = None) -> int:
 
     p_serve = sub.add_parser("serve", help="run the Backlot server in the foreground")
     p_serve.add_argument("--port", type=int, default=_port())
+    p_serve.add_argument(
+        "--host",
+        default=None,
+        help="bind address (default 127.0.0.1; env BACKLOT_HOST; use 0.0.0.0 in containers)",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "open":
         return cmd_open(args.project_id)
     if args.command == "serve":
-        return cmd_serve(args.port)
+        return cmd_serve(args.port, args.host)
     parser.print_help()
     return 2
 
