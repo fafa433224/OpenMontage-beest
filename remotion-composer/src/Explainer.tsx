@@ -552,7 +552,7 @@ const BackgroundVideoLayer: React.FC<{
   );
 };
 
-const SceneRenderer: React.FC<{ cut: Cut; theme: ThemeConfig }> = ({ cut, theme }) => {
+const SceneRenderer: React.FC<{ cut: Cut; theme: ThemeConfig; durationInFrames: number }> = ({ cut, theme, durationInFrames }) => {
   // Wrap component with background video or image if specified
   const maybeWrapWithBg = (element: React.ReactElement) => {
     if (cut.backgroundVideo) {
@@ -717,6 +717,7 @@ const SceneRenderer: React.FC<{ cut: Cut; theme: ThemeConfig }> = ({ cut, theme 
           color={cut.progressColor || accent}
           animationStyle={(cut.progressAnimation as any) || "fill"}
           segments={cut.progressSegments} backgroundColor={cut.backgroundColor || theme.surfaceColor}
+          animationDurationFrames={durationInFrames}
         />
       </AbsoluteFill>
     );
@@ -850,7 +851,7 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
 
         return (
           <Sequence key={cut.id} from={from} durationInFrames={duration}>
-            <SceneRenderer cut={cut} theme={theme} />
+            <SceneRenderer cut={cut} theme={theme} durationInFrames={duration} />
           </Sequence>
         );
       })}
