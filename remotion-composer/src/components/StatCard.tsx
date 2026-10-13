@@ -44,7 +44,12 @@ export const StatCard: React.FC<StatCardProps> = ({
         background: backgroundColor,
       }}
     >
-      <div style={{ textAlign: "center" }}>
+      {/* width:100% + maxWidth forces wrapping. Without it the flex item
+          shrink-to-fit sized the subtitle to its single-line max-content
+          width, and the text ran off the right edge of the canvas (observed
+          in a 712s reference render: a 140-char subtitle clipped mid-word
+          at 1920px). */}
+      <div style={{ textAlign: "center", width: "100%", maxWidth: 1440, padding: "0 80px" }}>
         <div
           style={{
             transform: `scale(${scale})`,
@@ -53,6 +58,7 @@ export const StatCard: React.FC<StatCardProps> = ({
             fontFamily: "Inter, system-ui, sans-serif",
             fontWeight: 800,
             lineHeight: 1.1,
+            overflowWrap: "break-word",
           }}
         >
           {stat}
@@ -66,6 +72,9 @@ export const StatCard: React.FC<StatCardProps> = ({
               fontFamily: "Inter, system-ui, sans-serif",
               fontWeight: 400,
               marginTop: 16,
+              width: "100%",
+              lineHeight: 1.4,
+              overflowWrap: "break-word",
             }}
           >
             {subtitle}
