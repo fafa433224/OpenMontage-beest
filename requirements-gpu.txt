@@ -12,3 +12,7 @@ lancedb>=0.15
 # keep av on the 13.x line.
 faster-whisper>=1.0
 av>=13.0,<14
+# CLIP embeddings for lib/clip_embedder.py (openai/clip-vit-base-patch32,
+# 512-d) — used by the Open-Sora indexer and corpus ranking. Kaggle images
+# ship it, but declare it so bare GPU boxes get it too.
+transformers>=4.36
