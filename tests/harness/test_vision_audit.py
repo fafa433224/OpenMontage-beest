@@ -37,10 +37,19 @@ def _video(path: Path, *, kind: str, seconds: float = 6.0, fps: int = 12) -> Pat
     """Synthesize a video with a known defect (or none) via ffmpeg."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if kind == "moving":
-        # Moving gradient: high motion energy, high variety between samples.
-        vf = "gradients=s=320x180:d=%s:speed=0.9" % seconds
+        # Conway's game of life: deterministic from a seed, and its LAYOUT
+        # keeps changing, which is what the variety metric measures (a dHash
+        # Hamming distance, i.e. structure — not raw pixel difference).
+        #
+        # This replaced `gradients`, which picks a random initial field on
+        # every run: three identical commands produced three different files
+        # and variety ratios swinging 0.49-0.88, so the test failed roughly
+        # one run in three and looked like a metric bug. It was the fixture.
+        # Byte-identical here across repeated runs, variety 0.82.
+        vf = ("life=s=320x180:rate=%d:seed=7"
+              ":life_color=white:death_color=black" % fps)
         cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", vf,
-               "-t", str(seconds), "-r", str(fps), "-pix_fmt", "yuv420p", str(path)]
+               "-t", str(seconds), "-pix_fmt", "yuv420p", str(path)]
     elif kind == "static":
         # One flat colour for the WHOLE video: no motion, no variety.
         cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
