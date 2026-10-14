@@ -359,6 +359,13 @@ class CreativeDirector:
         self._last_transition: Optional[str] = None
         self._last_bg: Optional[str] = None
         self._pick_counters = {"transition": 0, "bg": 0, "align": 0}
+        # Per-project offsets into each typed pool — two projects with the
+        # same cut structure must NOT walk the pools from the same position.
+        self._pool_offsets = {
+            "transition": self.rng.randrange(8),
+            "bg": self.rng.randrange(len(BG_STYLES)),
+            "align": self.rng.randrange(len(ALIGNMENTS)),
+        }
 
         # Pacing: cut-length preference scaling.
         pacing = str(self.brief.get("pacing", "")).lower()
@@ -375,22 +382,22 @@ class CreativeDirector:
         pool = TYPE_TRANSITIONS.get(cut_type, self._transitions)
         if len(pool) == 1:
             return pool[0]
-        pick = pool[index % len(pool)]
+        pick = pool[(index + self._pool_offsets["transition"]) % len(pool)]
         if pick == self._last_transition and len(pool) > 1:
-            pick = pool[(index + 1) % len(pool)]
+            pick = pool[(index + self._pool_offsets["transition"] + 1) % len(pool)]
         self._last_transition = pick
         return pick
 
     def bg_style(self, index: int, is_hero: bool = False) -> str:
         pool = HERO_BG_STYLES if is_hero else self._bg_styles
-        pick = pool[index % len(pool)]
+        pick = pool[(index + self._pool_offsets["bg"]) % len(pool)]
         if pick == self._last_bg and len(pool) > 1:
-            pick = pool[(index + 1) % len(pool)]
+            pick = pool[(index + self._pool_offsets["bg"] + 1) % len(pool)]
         self._last_bg = pick
         return pick
 
     def align(self, index: int) -> str:
-        return self._aligns[index % len(self._aligns)]
+        return self._aligns[(index + self._pool_offsets["align"]) % len(self._aligns)]
 
     def caption_style(self) -> dict[str, Any]:
         return dict(self._caption_style)
