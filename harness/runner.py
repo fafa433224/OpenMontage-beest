@@ -304,11 +304,11 @@ def run_project(
             "--motion", motion,
             "--broll-source", broll_source,
         ]
-        # Remotion's multi-worker mode races the compositor's frame cache in
-        # a headless container (measured 4 failures / 6 attempts at 2 workers
-        # vs 0 / 4 at 1). Pass the flag only when asked for explicitly; the
-        # render stage defaults to a single deterministic worker.
-        if concurrency and concurrency != 1:
+        # Pass through when asked for. The render stage handles the default
+        # itself (Remotion's CPU-count default) and retries single-worker if
+        # it hits the compositor frame race, which only affects media still
+        # going through OffthreadVideo.
+        if concurrency:
             render_cmd += ["--concurrency", str(concurrency)]
         if no_llm or llm is None:
             render_cmd += ["--no-llm"]

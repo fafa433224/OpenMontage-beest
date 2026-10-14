@@ -179,20 +179,111 @@ def test_contrast_statistic_reaches_the_type():
     )
 
 
-def test_legibility_findings_are_advisory_on_downscaled_samples(tmp_path):
-    """A 960-wide preview cannot settle a legibility question."""
-    from harness.vision import visual_audit
-
-    video = tmp_path / "flat.mp4"
+def _gray_video(path, *, width, height=180, seconds=2.0):
     subprocess.run(
         ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
-         "color=c=gray:s=320x180:d=2", "-pix_fmt", "yuv420p", str(video)],
+         f"color=c=gray:s={width}x{height}:d={seconds}",
+         "-pix_fmt", "yuv420p", str(path)],
         check=True,
     )
+    return path
+
+
+def test_legibility_findings_are_advisory_on_downscaled_samples(tmp_path):
+    """A downscaled sample cannot settle a legibility question."""
+    from harness.vision import visual_audit
+
+    video = _gray_video(tmp_path / "flat.mp4", width=320)
     spans = [{"index": 0, "start": 0.0, "end": 2.0, "kind": "scene"}]
     report = visual_audit(video, tmp_path / "out", scene_spans=spans, frame_width=640)
     contrast = [i for i in report["issues"] if "low contrast" in i["problem"]]
     for issue in contrast:
         assert issue["severity"] == "info"
         assert "advisory" in issue["problem"]
+
+
+def test_reported_sample_width_is_the_width_actually_read(tmp_path):
+    """The metrics must not claim a resolution the sample never had.
+
+    This was a real mis-report: frames were scaled to the requested width
+    unconditionally, so a 960x540 preview was UPscaled to 1280 and then
+    recorded as a 1280-wide sample — which is exactly the number the
+    legibility verdict keys on, and the wrong answer.
+    """
+    from harness.vision import extract_frames, visual_audit
+
+    spans = [{"index": 0, "start": 0.0, "end": 2.0, "kind": "scene"}]
+
+    # A source smaller than the request: never upscale, report the truth.
+    small = _gray_video(tmp_path / "small.mp4", width=320)
+    frames = extract_frames(small, [0.5], tmp_path / "f", width=1280)
+    from PIL import Image
+
+    assert Image.open(frames[0]).size[0] == 320, "upscaling invents no detail"
+    report = visual_audit(small, tmp_path / "a", scene_spans=spans, frame_width=1280)
+    assert report["metrics"]["frame_width"] == 320
+    assert report["metrics"]["requested_frame_width"] == 1280
+
+    # A source larger than the request: downscaled, and the request is met.
+    big = _gray_video(tmp_path / "big.mp4", width=1920, height=1080)
+    report = visual_audit(big, tmp_path / "b", scene_spans=spans, frame_width=640)
     assert report["metrics"]["frame_width"] == 640
+    assert report["metrics"]["requested_frame_width"] == 640
+
+
+# ---------------------------------------------------------------------------
+# "a short scene must not spend half its life blank"
+# ---------------------------------------------------------------------------
+
+def test_short_scenes_land_their_copy_early():
+    """A 2.7 s title card whose kicker lands at 55% is mostly an empty frame.
+
+    Found by looking at a rendered frame at 20 s: decor and a caption, no
+    words. The scheme's staging was authored for long scenes and reused
+    unchanged on a short one.
+    """
+    from lib.motion_compiler import (
+        SHORT_SCENE_SECONDS,
+        SHORT_SCENE_TEXT_DEADLINE,
+        compile_scene,
+    )
+
+    for duration in (2.7, 4.0, 5.5):
+        assert duration < SHORT_SCENE_SECONDS
+        spec = compile_scene(
+            {"heading": "Fix the cheapest layer",
+             "text": "Catch each failure at the cheapest layer."},
+            None, "pace-probe", index=0, duration=duration,
+        )
+        last_text = max(
+            (lyr["enterAt"] + lyr["enterDur"] for lyr in spec["layers"]
+             if lyr["kind"] in TEXT_LAYER_KINDS),
+            default=0.0,
+        )
+        assert last_text <= SHORT_SCENE_TEXT_DEADLINE + 1e-6, (
+            f"a {duration}s scene leaves its copy off screen until {last_text:.2f}"
+        )
+
+
+def test_long_scenes_keep_their_staging():
+    """The compression is a floor for short scenes, not a global rule."""
+    from lib.motion_compiler import (
+        SHORT_SCENE_SECONDS,
+        SHORT_SCENE_TEXT_DEADLINE,
+        TEXT_LAYER_KINDS,
+        compile_scene,
+    )
+
+    spec = compile_scene(
+        {"heading": "A longer scene has room to stage an entrance",
+         "text": "Nothing here needs compressing."},
+        None, "pace-probe", index=0, duration=SHORT_SCENE_SECONDS * 2,
+    )
+    last_text = max(
+        (lyr["enterAt"] + lyr["enterDur"] for lyr in spec["layers"]
+         if lyr["kind"] in TEXT_LAYER_KINDS),
+        default=0.0,
+    )
+    assert last_text > SHORT_SCENE_TEXT_DEADLINE, (
+        "long scenes should keep the scheme's own pacing"
+    )

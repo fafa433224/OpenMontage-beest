@@ -156,6 +156,16 @@ TEXT_LAYER_KINDS: tuple[str, ...] = (
     "quote",
 )
 
+#: Scenes shorter than this get their copy scheduled to land early. A 2.7 s
+#: title card whose kicker does not finish entering until 55% of the way
+#: through spends most of its life blank — visible in the render as a frame
+#: with decor, a caption and no words. Long scenes have room to stage an
+#: entrance; short ones do not.
+SHORT_SCENE_SECONDS: float = 6.0
+
+#: Latest fraction of a short scene by which every text layer must be in.
+SHORT_SCENE_TEXT_DEADLINE: float = 0.55
+
 #: Rest-state opacity floor for text layers. Rendering a full video showed
 #: what a lower value costs: `body` at 0.55 composited #9FB8BC over #09191B
 #: into a mid-grey — visible in the frame as "washed out", flagged by the
@@ -990,6 +1000,22 @@ def compile_scene(
     # section's kicker vanished from the frame.) Missing content layers are
     # injected with sensible choreography rather than lost.
     layers = _ensure_content_coverage(layers, section, cls)
+
+    # --- short-scene pacing ----------------------------------------------
+    # Decor may take as long as it likes (a panel that curtains across the
+    # whole scene is a look). Copy may not: on a short scene, anything that
+    # has not arrived by the deadline is compressed to fit, preserving the
+    # scheme's ORDER while removing the dead air.
+    if float(duration) < SHORT_SCENE_SECONDS:
+        late = [lyr for lyr in layers
+                if lyr["kind"] in TEXT_LAYER_KINDS
+                and lyr["enterAt"] + lyr["enterDur"] > SHORT_SCENE_TEXT_DEADLINE]
+        if late:
+            latest = max(lyr["enterAt"] + lyr["enterDur"] for lyr in late)
+            scale = SHORT_SCENE_TEXT_DEADLINE / latest if latest > 0 else 1.0
+            for lyr in late:
+                lyr["enterAt"] = round(lyr["enterAt"] * scale, 4)
+                lyr["enterDur"] = round(max(0.12, lyr["enterDur"] * scale), 4)
 
     # Most scenes get a signature moment; a few deliberately do not, so the
     # gesture does not become its own template.

@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import React from "react";
-import { AbsoluteFill, Loop, OffthreadVideo, useVideoConfig } from "remotion";
+import { AbsoluteFill, Loop, OffthreadVideo, Video, useVideoConfig } from "remotion";
 
 import { resolveAsset } from "../lib/resolveAsset";
 import type { ScenePalette } from "./palettes";
@@ -122,7 +122,19 @@ export const BackgroundVideoLayer: React.FC<BackgroundVideoLayerProps> = ({
   if (prepared) {
     return (
       <AbsoluteFill style={{ overflow: "hidden" }}>
-        <OffthreadVideo
+        {/* <Video>, deliberately — NOT <OffthreadVideo>.
+            OffthreadVideo extracts every frame with Remotion's bundled Rust
+            ffmpeg (`remotion::ffmpeg::extract_frame`), which in a constrained
+            headless container fails at arbitrary positions on files that
+            ffmpeg itself decodes without complaint:
+              "Compositor error: No frame found at position 4693 for source
+               .../s0-hero.mp4"
+            A pre-baked clip is already exactly the scene's length, so it is
+            read start-to-finish and needs no frame-accurate seeking — the
+            browser's own decoder is both sufficient and reliable here. The
+            looping path below keeps OffthreadVideo, because that one really
+            does need exact extraction. */}
+        <Video
           src={resolveAsset(src)}
           playbackRate={playbackRate}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}

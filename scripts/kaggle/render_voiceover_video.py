@@ -71,6 +71,34 @@ def sh(cmd, cwd=None):
     subprocess.run(cmd, shell=True, cwd=cwd, check=True)
 
 
+def estimated_words(script: dict, durations: list) -> list:
+    """Distribute each section's script words across its measured duration.
+
+    Word timings normally come from transcribing the voiceover, which needs
+    faster-whisper and (for speed) a GPU. That dependency should not be able
+    to lose a session: the narration TEXT is already known — it is the script
+    — and each section's duration is measured from the real audio, so
+    captions can be reconstructed to within a few hundred milliseconds.
+
+    This is a fallback, not a substitute: the caller prints a warning so the
+    degradation is never silent.
+    """
+    words = []
+    t = 0.0
+    for section, dur in zip(script.get("sections", []), durations):
+        tokens = str(section.get("text") or "").split()
+        if not tokens or dur <= 0:
+            t += dur
+            continue
+        step = dur / len(tokens)
+        for i, tok in enumerate(tokens):
+            start = t + i * step
+            words.append({"word": tok, "start": round(start, 3),
+                          "end": round(start + step, 3)})
+        t += dur
+    return words
+
+
 def duration(path):
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                           "-of", "default=nw=1:nk=1", str(path)], capture_output=True, text=True).stdout
@@ -487,6 +515,7 @@ def main() -> int:
                 broll_proc, broll_res_path = collect_broll_parallel(
                     script, brief, composer, out_dir, gpu_clip)
 
+        words = []
         with stage("2_transcribe_gpu"):
             try:
                 if gpu_whisper is not None:
@@ -497,17 +526,25 @@ def main() -> int:
                                             "model_size": "medium", "language": "en",
                                             "output_dir": str(out_dir / "transcript")})
                 if not tr.success:
-                    raise SystemExit(f"transcription failed: {tr.error}")
-            except BaseException:
-                # Never orphan the GPU-1 collector if transcription dies —
-                # it would hold the second T4 until the Kaggle session ends.
-                if broll_proc is not None and broll_proc.poll() is None:
-                    broll_proc.kill()
-                raise
-            words = tr.data["word_timestamps"]
-            print("device", tr.data.get("device"), "compute", tr.data.get("compute_type"),
-                  "words", len(words), "last word end", words[-1]["end"])
-            timing["transcription_device"] = tr.data.get("device")
+                    raise RuntimeError(tr.error)
+                words = tr.data["word_timestamps"] or []
+                print("device", tr.data.get("device"), "compute", tr.data.get("compute_type"),
+                      "words", len(words), "last word end", words[-1]["end"])
+                timing["transcription_device"] = tr.data.get("device")
+                timing["word_source"] = "whisper"
+            except Exception as exc:  # noqa: BLE001 — degrade, never lose the run
+                # Word-level captions are worth a GPU and worth installing
+                # faster-whisper for — but not worth the whole session. The
+                # narration text is known and the durations are measured from
+                # the real audio, so the captions can be reconstructed and the
+                # render continues. A hard failure here used to abort the run
+                # on any box without the GPU stack.
+                words = estimated_words(script, durations)
+                timing["word_source"] = "estimated"
+                print(f"WARNING: transcription unavailable ({exc}). "
+                      f"Falling back to script-derived word timings "
+                      f"({len(words)} words) — captions will be approximate.",
+                      flush=True)
 
         # Harvest the Open-Sora collector (it has been running in parallel).
         broll_entries = []
@@ -601,8 +638,15 @@ def main() -> int:
 
     def render_body(conc: Optional[int], out_path: Path) -> tuple[bool, str]:
         flag = f" --concurrency={conc}" if conc else ""
+        # --timeout is Remotion's delayRender budget: the time a frame is
+        # allowed to wait for the browser to fetch and seek a video element.
+        # It defaults to 30s, and at 120s a 2-vCPU box still timed out
+        # mid-render ("Rendering <Html5Video /> ... " after 126.7s). Decoding
+        # stock footage is the slowest thing in the frame, so the budget is
+        # generous and overridable rather than tuned to a fast machine.
+        timeout_ms = int(os.environ.get("OPENMONTAGE_RENDER_TIMEOUT_MS", "420000"))
         cmd = (f"npx remotion render src/index.tsx Explainer '{out_path}' --props '{props_path}' "
-               f"--codec h264 --timeout 120000{flag} --log info")
+               f"--codec h264 --timeout {timeout_ms}{flag} --log info")
         try:
             sh(cmd, cwd=composer)
             return True, ""
@@ -611,37 +655,36 @@ def main() -> int:
 
     body = out_dir / f"{args.name}-body.mp4"
     with stage("5_remotion_render"):
-        # --- worker count: measured, not assumed -------------------------
-        # Remotion's --concurrency runs independent render processes that
-        # share one extracted-asset directory. In this headless container
-        # that configuration corrupts the compositor's frame lookup at
-        # random: "Compositor error: No frame found at position 5632 for
-        # source .../remotion-assets-dir/<hash>.mp4".
+        # --- worker count --------------------------------------------------
+        # Remotion uses one render process per CPU core when --concurrency is
+        # not given, which is what we want on a Kaggle box. Multi-worker used
+        # to be unusable here: `OffthreadVideo` extracts every frame with
+        # Remotion's bundled Rust ffmpeg, and several workers reading the
+        # same asset at once failed at random positions on files ffmpeg
+        # itself decoded without complaint —
+        #     "Compositor error: No frame found at position 4693 for source
+        #      .../s0-hero.mp4"
+        # measured at 4 failures / 6 attempts with 2 workers vs 0 / 4 with 1.
         #
-        # Measured on a 2190-frame render, identical props and command:
-        #     concurrency 2  ->  4 failures / 6 attempts
-        #     concurrency 1  ->  0 failures / 4 attempts
-        # and the failure is independent of the footage (raw synth clip and
-        # pre-baked clip both hit it), independent of trim (with and without
-        # trimBefore/trimAfter) and independent of looping (with and without
-        # <Loop>). It lands on a different frame each time, which is what a
-        # multi-process race looks like and what no amount of correct props
-        # can prevent.
-        #
-        # So the default is ONE worker. The body pass is ~2 minutes of a
-        # ~20-minute Kaggle session; a random hard failure that costs the
-        # whole session is not worth 1.3 minutes. Passing --concurrency
-        # explicitly still works, and a race then retries single-worker
-        # instead of failing.
-        conc = args.concurrency if args.concurrency is not None else 1
-        if conc != 1:
-            print(f"NOTE: rendering with {conc} workers (explicitly requested); "
-                  f"a compositor frame race will retry single-worker.", flush=True)
+        # The cause was the renderer, not the worker count: pre-baked scene
+        # clips are already exactly their scene's length, so they are played
+        # start-to-finish by `<Video>` (the browser decoder) and never touch
+        # the extractor. With that, 2 workers rendered clean twice in a row
+        # and 8x faster than one. The retry stays as a safety net for the
+        # paths that still use OffthreadVideo (the looping fallback and
+        # template cuts with backgroundVideo).
+        conc = args.concurrency
+        effective = conc or min(4, os.cpu_count() or 1)
         ok, err = render_body(conc, body)
-        if not ok and conc > 1 and "No frame found" in err:
-            print(f"WARNING: render failed at --concurrency={conc} with a compositor "
-                  f"frame race; retrying single-worker (slower but deterministic).",
-                  flush=True)
+        if not ok and effective > 1:
+            # Two distinct failure modes, one cause: this much video decoding
+            # on few cores. Either the compositor loses a frame under
+            # concurrent reads, or a video element exceeds its delayRender
+            # budget. Both are worker-count symptoms, so both retry the same
+            # way — alone, with the whole box to itself.
+            why = "compositor frame race" if "No frame found" in err else "decode timeout"
+            print(f"WARNING: render failed with {effective} worker(s) ({why}); "
+                  f"retrying single-worker (slower but deterministic).", flush=True)
             ok, err = render_body(1, body)
         if not ok:
             raise RuntimeError(f"remotion render failed: {err[-400:]}")

@@ -156,7 +156,13 @@ def extract_frames(
             "-ss", f"{max(0.0, float(t)):.3f}",
             "-i", str(video),
             "-frames:v", "1",
-            "-vf", f"scale={width}:-2",
+            # `min(iw,width)` — downscale for speed, but NEVER upscale. A
+            # 320-wide source blown up to 1280 gains no detail and loses
+            # signal: the smoothing makes adjacent frames hash more alike, so
+            # a genuinely moving video measured less varied the larger it was
+            # asked to be. Scaling up also inflated the reported sample width,
+            # which is what the legibility verdict keys on.
+            "-vf", f"scale=min(iw\\,{width}):-2",
             str(dest),
         ]
         try:
@@ -397,8 +403,13 @@ def visual_audit(
     frames_root = out_dir / "qc-frames"
     #: Below this, legibility findings are advisory: the frames are too
     #: downscaled for thin type to survive intact, so a "low contrast" reading
-    #: says more about the resampling than about the video.
-    legibility_reliable = frame_width >= 1280
+    #: says more about the resampling than about the video. Keyed on the
+    #: width actually sampled — min(source, requested) — not the requested
+    #: one, or a small source would be judged as if it had been captured at
+    #: full resolution.
+    source_width = _probe_width(video)
+    sampled_width = min(source_width, frame_width) if source_width else frame_width
+    legibility_reliable = sampled_width >= 1280
     if frames_root.exists() and not keep_frames:
         shutil.rmtree(frames_root, ignore_errors=True)
     frames_root.mkdir(parents=True, exist_ok=True)
@@ -507,7 +518,7 @@ def visual_audit(
             # finding is kept but labelled for what it is instead of being
             # reported as a delivery defect.
             detail = "" if legibility_reliable else (
-                f" — advisory only: sampled at {frame_width}px wide, thin type "
+                f" — advisory only: sampled at {sampled_width}px wide, thin type "
                 f"does not survive downscaling; re-audit the full-scale render"
             )
             issues.append({
@@ -553,8 +564,10 @@ def visual_audit(
         "scenes_audited": len(scene_reports),
         "frames_sampled": sum(s["sampled"] for s in scene_reports),
         # Sample resolution: legibility findings are only conclusive at
-        # >= 1280px wide (see extract_frames).
-        "frame_width": frame_width,
+        # >= 1280px wide (see extract_frames). This is the width actually
+        # read, after capping at the source's own resolution.
+        "frame_width": sampled_width,
+        "requested_frame_width": frame_width,
         "distinct_frame_hashes": len(distinct_hashes),
         "variety_ratio": round(variety_ratio, 4),
         "structure_variety": round(structure_variety, 5),
@@ -672,6 +685,22 @@ def _probe_duration(video: Path) -> Optional[float]:
             capture_output=True, text=True, timeout=30,
         ).stdout
         return float(json.loads(out)["format"]["duration"])
+    except Exception:
+        return None
+
+
+def _probe_width(video: Path) -> Optional[int]:
+    """Width of the video's first stream, or None if ffprobe cannot say."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v",
+             "-show_entries", "stream=width", "-of", "default=nw=1:nk=1", str(video)],
+            capture_output=True, text=True, timeout=30,
+        ).stdout.strip().splitlines()
+        return int(out[0]) if out and out[0].isdigit() else None
     except Exception:
         return None
 

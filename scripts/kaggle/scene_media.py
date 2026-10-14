@@ -56,6 +56,13 @@ COMPOSITOR_TIMESCALE = 12800
 MAX_SCENE_SECONDS = 900.0
 
 
+def _slug(text: str) -> str:
+    """Filesystem-safe, stable name for a project id."""
+    keep = [c if (c.isalnum() or c in "-_") else "-" for c in str(text or "")]
+    out = "".join(keep).strip("-")
+    return out or "project"
+
+
 def _ffmpeg() -> str:
     return shutil.which("ffmpeg") or "ffmpeg"
 
@@ -172,8 +179,17 @@ def prepare_scene_media(
     caller's retry ladder still covers them) rather than failing the render.
     """
     public = composer / "public"
-    cut_dir = public / "broll" / "scenes"
-    report: dict[str, Any] = {"prepared": [], "skipped": [], "seconds": 0.0}
+    # Clips are namespaced by project. Cut ids ("s1-hero") repeat across
+    # projects, so a flat directory let one render read another project's
+    # footage — a wrong-footage bug that is invisible at a glance because the
+    # filename looks right. Clear the project's own directory, never a
+    # sibling's.
+    cut_dir = public / "broll" / "scenes" / _slug(project_id)
+    if cut_dir.exists():
+        for stale in cut_dir.glob("*.mp4"):
+            stale.unlink(missing_ok=True)
+    report: dict[str, Any] = {"prepared": [], "skipped": [], "seconds": 0.0,
+                              "dir": str(cut_dir.relative_to(public))}
 
     for i, cut in enumerate(props.get("cuts") or []):
         spec = cut.get("bespoke") if isinstance(cut, dict) else None
@@ -205,7 +221,7 @@ def prepare_scene_media(
             continue
 
         media.update({
-            "src": f"broll/scenes/{out.name}",
+            "src": f"broll/scenes/{_slug(project_id)}/{out.name}",
             "kind": "video",
             "startSeconds": 0.0,
             "sourceDuration": meta["sceneSeconds"],

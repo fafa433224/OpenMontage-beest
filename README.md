@@ -588,16 +588,68 @@ Branding rides the existing plumbing: `themeConfig` for Remotion
 (merged by `resolveTheme`), CSS vars for HyperFrames, palette anchors
 for the creative director.
 
-### 3. Code2motion — the LLM authors the motion code, the ladder guarantees the render
+### 3. Code2motion — scenes are compiled, not templated
 
-`--motion code2motion` (or `auto` with an LLM configured) has the
-runtime model author **bespoke HyperFrames intro/outro cards** as
-complete HTML+GSAP compositions, then climbs a validation ladder:
+Templates were the ceiling on creativity: every video varied its
+*parameters* but never its **structure**. `--motion code2motion` compiles
+each scene into a choreography program instead.
+
+**Body scenes** are composed by `lib/motion_compiler.py` from a vocabulary
+of 12 schemes × 28 motion verbs × 16 easings × 15 layer kinds × 12 camera
+paths × 13 signature moments, seeded per `(channel, project, index, mood)`:
+
+* the seed makes a Kaggle retry reproduce the same frames, while a
+  different project gets a different program;
+* a **shuffled scheme ring per project** means consecutive scenes never
+  repeat a scheme, and no two projects share a running order;
+* schemes decide **structure**; verbs, easings, depth and texture are
+  seeded *inside* that structure — so "kinetic-split" never looks like
+  "kinetic-split" twice;
+* a **content-coverage contract** lets a scheme restructure authored copy
+  but never silently drop it;
+* `lint_spec()` is the pre-render contract, mirrored by `validateSpec()`
+  in the runtime, and a spec that fails either one falls down a ladder to
+  the template component rather than rendering a broken frame.
+
+Every decision is recorded in `motionPlan` (compiled / fallbackToTemplate /
+schemes / distinctSchemes / signatureMoments / rejected), which is what
+makes "why does this video look like this" answerable after the fact.
+
+**Intro/outro cards** are still authored by the runtime LLM as complete
+HyperFrames HTML+GSAP compositions, climbing a validation ladder:
 
 ```
 LLM authors card → structural lint → repair loop (max 2) → render probe
 (ffprobe duration) → on ANY failure → brand-parameterized template
 ```
+
+### 3b. The visual audit — the harness looks at its own output
+
+Generation that is never inspected is generation you cannot trust. Every run
+samples frames from the rendered video and measures what a viewer would
+actually see: per-scene **motion energy**, frame-hash **variety** (are we
+making the same frame twice?), **structural variety** across scenes,
+**contrast** (`p99-p05` luma — the statistic that reaches small type),
+**dead and blown frames**, and **edge bleed** (clipped type). High-severity
+findings flip the review verdict, so a bad video cannot pass as a good one.
+
+With a vision-capable model configured it also critiques frames directly,
+via `harness/vision.py` → `harness/review.py`. This is the Fable 5.1
+lesson applied: the self-inspection loop, not the model, is what catches
+visible errors.
+
+Two honesty rules are baked in, both learned the hard way:
+
+* findings below a 1280px sample are downgraded to advisory `info` — a
+  downscaled frame cannot settle a legibility question;
+* the reported `frame_width` is the width **actually read**, never the
+  requested one, and extraction never upscales.
+
+All ten render-path rules this pipeline depends on — one owner per asset,
+bake the loop, the compositor's 1/12800 timescale, the language of
+`<Video>` vs `<OffthreadVideo>`, the text opacity floor, the p99 contrast
+statistic — are written up in
+[`docs/RENDER_PIPELINE.md`](docs/RENDER_PIPELINE.md).
 
 Lint enforces the render contract (single root, paused timeline
 registered at `window.__timelines`, local GSAP, transform/opacity only)
