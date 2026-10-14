@@ -50,33 +50,101 @@ def _dataset_dir(explicit: Optional[str] = None) -> Path:
 
 
 def find_manifest(dataset_dir: Path) -> Optional[Path]:
-    """Locate the CSV manifest inside a downloaded dataset."""
+    """Locate the CSV/JSON manifest inside a downloaded dataset."""
     if not dataset_dir.is_dir():
         return None
     candidates: list[Path] = []
-    for pattern in ("*.csv", "**/*.csv"):
+    for pattern in ("*.csv", "*.json", "**/*.csv", "**/*.json"):
         candidates.extend(sorted(dataset_dir.glob(pattern)))
-    # Prefer files with 'sora' or 'meta' in the name, then any CSV.
+    # Prefer files with 'sora'/'meta'/'caption'/'cap' in the name, then any.
     candidates.sort(key=lambda p: (
-        0 if any(t in p.name.lower() for t in ("sora", "meta", "caption")) else 1,
+        0 if any(t in p.name.lower() for t in ("sora", "meta", "caption", "cap")) else 1,
         len(str(p)),
     ))
+    # Skip our own pointer file.
+    candidates = [c for c in candidates if c.name != "lancedb.json"]
     return candidates[0] if candidates else None
 
 
-def read_manifest(dataset_dir: Path, limit: Optional[int] = None) -> list[dict[str, Any]]:
-    """Read the CSV manifest into row dicts with normalised keys.
+def _rows_from_json(path: Path, dataset_dir: Path, limit: Optional[int]) -> list[dict[str, Any]]:
+    """Read a JSON manifest — handles both {path: caption} dicts and
+    [{path|video|url, caption|text}] lists (the HF Open-Sora-Plan layout
+    ships `llava_path_cap_*.json` as a dict)."""
+    import json as _json
 
-    Resolves each row's video path against the dataset dir (and common
-    sub-roots like ``videos/``) and drops rows whose file is missing, so
-    the indexer only ever sees real footage.
+    data = _json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    pairs: list[tuple[str, str, str]] = []  # (video_id, rel_path, caption)
+
+    if isinstance(data, dict):
+        for key, value in data.items():
+            caption = value if isinstance(value, str) else (
+                (value or {}).get("caption") or (value or {}).get("text") or ""
+            )
+            rel = key
+            # HF keys may be full URLs or absolute paths — reduce to basename.
+            if rel.startswith(("http://", "https://")):
+                rel = rel.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+            elif "/" in rel:
+                rel = rel.rsplit("/", 1)[-1]
+            pairs.append((Path(rel).stem, rel, caption))
+    elif isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            rel = str(item.get("path") or item.get("video") or item.get("url") or item.get("id") or "")
+            caption = str(item.get("caption") or item.get("text") or "")
+            if rel.startswith(("http://", "https://")):
+                rel = rel.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+            elif "/" in rel:
+                rel = rel.rsplit("/", 1)[-1]
+            pairs.append((Path(rel).stem, rel, caption))
+
+    # Map basenames to actual files under the dataset dir (any subdir depth).
+    files: dict[str, Path] = {}
+    for ext in ("*.mp4", "*.mov", "*.webm", "*.avi", "*.mkv"):
+        for f in dataset_dir.rglob(ext):
+            files.setdefault(f.name, f)
+
+    rows: list[dict[str, Any]] = []
+    for vid, rel, caption in pairs:
+        f = files.get(rel)
+        if f is None:
+            # try with a different container suffix
+            stem = Path(rel).stem
+            f = next((files[n] for n, p in files.items() if p.stem == stem), None)
+        if f is None:
+            continue
+        rows.append({
+            "clip_id": f"open_sora_{vid}",
+            "local_path": str(f),
+            "caption": caption,
+        })
+        if limit and len(rows) >= limit:
+            break
+    return rows
+
+
+def read_manifest(dataset_dir: Path, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    """Read the CSV/JSON manifest into row dicts with normalised keys.
+
+    Resolves each row's video path against the dataset dir (JSON basenames
+    are matched against files at any depth) and drops rows whose file is
+    missing, so the indexer only ever sees real footage.
     """
     manifest = find_manifest(dataset_dir)
     if manifest is None:
         raise FileNotFoundError(
-            f"No CSV manifest found under {dataset_dir}. Point OPEN_SORA_DIR at "
-            "the dataset root (the directory containing the CSV and the videos)."
+            f"No CSV/JSON manifest found under {dataset_dir}. Point OPEN_SORA_DIR at "
+            "the dataset root (the directory containing the manifest and the videos)."
         )
+    if manifest.suffix.lower() == ".json":
+        rows = _rows_from_json(manifest, dataset_dir, limit)
+        if not rows:
+            raise ValueError(
+                f"JSON manifest {manifest} produced no resolvable video rows."
+            )
+        return rows
+
     rows: list[dict[str, Any]] = []
     with open(manifest, encoding="utf-8", errors="replace", newline="") as f:
         reader = csv.DictReader(f)
