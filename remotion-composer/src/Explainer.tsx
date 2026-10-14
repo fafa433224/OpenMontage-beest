@@ -21,6 +21,7 @@ import { PieChart } from "./components/charts/PieChart";
 import { KPIGrid } from "./components/charts/KPIGrid";
 import { ProgressBar } from "./components/ProgressBar";
 import { CaptionOverlay, WordCaption, type CaptionStyleConfig } from "./components/CaptionOverlay";
+import { BrandOverlay } from "./components/BrandOverlay";
 import { SectionTitle } from "./components/SectionTitle";
 import { StatReveal } from "./components/StatReveal";
 import { HeroTitle } from "./components/HeroTitle";
@@ -33,7 +34,7 @@ import type { ScreenshotStep } from "./components/ScreenshotScene";
 import { ProviderChip } from "./components/ProviderChip";
 import { resolveAsset } from "./lib/resolveAsset";
 import type { ParticleType } from "./components/ParticleOverlay";
-import { resolveTheme, type ThemeConfig } from "./Root";
+import { resolveTheme, type ThemeConfig, type BrandOverlayConfig } from "./theme";
 import {
   paletteByIndex,
   effectivePalettes,
@@ -296,6 +297,9 @@ export interface ExplainerProps {
   creativeSeed?: number;
   /** Transition timing multiplier: 0.7 snappy / 1 standard / 1.4 cinematic. */
   transitionSpeed?: number;
+  /** Channel brand identity layer (watermark/wordmark) — emitted when the
+   *  run is channel-branded (lib/brand_profile.py brand_overlay_props). */
+  brandOverlay?: BrandOverlayConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -1027,6 +1031,12 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
           </Sequence>
         );
       })}
+
+      {/* Layer 3b: Channel brand watermark (optional, on top of scenes,
+          under captions) — the per-channel identity layer. */}
+      {props.brandOverlay && (
+        <BrandOverlay brand={props.brandOverlay} durationInFrames={durationInFrames} />
+      )}
 
       {/* Layer 3: Captions (word-by-word highlight, style-pack driven) */}
       {captions && captions.length > 0 && (

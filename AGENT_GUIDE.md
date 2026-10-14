@@ -704,6 +704,11 @@ The `.agents/skills/` directory is large. When you're not coming in through a to
 | How does a tool actually work? | the tool's `usage_location` from the registry |
 | How should this pipeline stage behave? | `skills/pipelines/<pipeline>/...` |
 | What is the checkpoint/review policy? | `skills/meta/` |
+| The user wants a video with NO agent in the loop? | `skills/core/harness.md` — `python -m harness run <input>` (Kaggle/CI/cron) |
+| How do channel brands work? | `lib/brand_profile.py`, `channels/<id>/brand.yaml`, `schemas/brands/channel.schema.json` |
+| How does LLM-authored motion code work? | `skills/meta/code2motion.md` and `lib/code2motion.py` |
+| How do I import Figma design tokens? | `tools/integrations/figma_tokens.py` (`action: import|fetch`) |
+| How does the user research facts headlessly? | the `web_search` tool (DuckDuckgo no-key floor, Tavily/Brave/Serper optional) |
 
 ## What Not To Do
 

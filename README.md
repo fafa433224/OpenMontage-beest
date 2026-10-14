@@ -540,6 +540,100 @@ synth fallback fails the run).
 
 ---
 
+## Headless Harness + Channel Brands + Code2motion (v4)
+
+v3 fixed "every video looks the same" per project. v4 closes the three
+gaps that remained: **no headless orchestrator**, **no channel
+identity**, and **template ceilings on creativity**.
+
+### 1. The harness — one command, no UI, no agent, no human
+
+```bash
+python -m harness run <input> --channel <id> [--motion auto|code2motion|template]
+python -m harness resume <project-id>     # after a session death (Kaggle 30h/week)
+python -m harness doctor                  # preflight every dependency
+```
+
+Input can be a `script.json`, a plain text/markdown file, a finished
+voiceover (the voiceover becomes the clock — whisper derives the
+sections), or a bare idea (LLM writes the script). Without a voiceover
+the harness narrates with Piper (free, offline). The execution core is
+the same proven stack: whisper captions on GPU 0, Open-Sora CLIP b-roll
+on GPU 1, the Remotion body, HyperFrames intro/outro, concat, and QC
+tripwires (duration sanity, word coverage, codecs) plus an optional LLM
+review. Every stage checkpoints into `projects/<id>/`, so a dead session
+costs one stage, not the run. Approval policies: `auto` (headless,
+logged), `gate` (freeze the plan for editing, resume later), `ask`.
+See [`skills/core/harness.md`](skills/core/harness.md).
+
+### 2. Channel brands — "channel 1 videos look like channel 1, channel 2 doesn't, and no video is a clone"
+
+`channels/<id>/brand.yaml` defines a **brand envelope**:
+
+- **Anchors** (fixed per channel): palette hue family + primary/accent,
+  caption pack, typography pairing, the transition/bg vocabulary,
+  pacing range, intro/outro wordmark + durations, SFX identity, watermark.
+- **Drift** (seeded per project): the walk order through the vocabulary,
+  palette lightness/glow variants, caption animation variant, pacing pick
+  inside the brand range.
+
+The project seed is `channel:project` — same channel + same project
+retries byte-identically; same channel + different projects share anchors
+but differ everywhere drift lives; different channels differ by
+construction. Presets: `default`, `tech-deep`, `story-loops`
+(`python -m harness channels`). Custom channels validate against
+`schemas/brands/channel.schema.json` and the renderer vocabularies — a
+bad brand file fails fast with the exact violation, never a wrong render.
+Branding rides the existing plumbing: `themeConfig` for Remotion
+(merged by `resolveTheme`), CSS vars for HyperFrames, palette anchors
+for the creative director.
+
+### 3. Code2motion — the LLM authors the motion code, the ladder guarantees the render
+
+`--motion code2motion` (or `auto` with an LLM configured) has the
+runtime model author **bespoke HyperFrames intro/outro cards** as
+complete HTML+GSAP compositions, then climbs a validation ladder:
+
+```
+LLM authors card → structural lint → repair loop (max 2) → render probe
+(ffprobe duration) → on ANY failure → brand-parameterized template
+```
+
+Lint enforces the render contract (single root, paused timeline
+registered at `window.__timelines`, local GSAP, transform/opacity only)
+and safety (determinism — no random in timelines; bounded repeats;
+offline assets; no fetch/eval). Generation can never fail a render —
+the fallback is the brand template, and every decision is recorded in
+the timing log (`timing.motion.*.rendered_as`). Authoring rules bake in
+the Fable 5.1 lessons: **fractional timing** (choreography as fractions
+of card duration) and **continuity anchors** (the intro ends on the
+palette the body opens with). Full write-up:
+[`skills/meta/code2motion.md`](skills/meta/code2motion.md) and
+[`docs/FABLE_PLAYBOOK.md`](docs/FABLE_PLAYBOOK.md).
+
+### 4. Figma design tokens → playbooks/brands (new `figma_tokens` tool)
+
+Import a Tokens Studio JSON export (offline) or fetch published styles
+from the Figma REST API (`FIGMA_TOKEN` + `FIGMA_FILE_KEY`) and get a
+schema-valid style playbook at `styles/custom/<name>.yaml` plus
+optionally a `channels/<id>/brand.yaml` — everything downstream (theme,
+CSS vars, captions, charts) then renders in the real brand colors:
+
+```bash
+python -c "from tools.tool_registry import registry; registry.discover(); \
+registry.get('figma_tokens').execute({'action': 'import', 'tokens_path': 'tokens.json', 'name': 'mybrand', 'write_brand': 'mybrand'})"
+```
+
+### 5. Headless research — `web_search` tool
+
+`tools/analysis/web_search.py` gives headless runs a real research stage:
+DuckDuckGo with **no key** (works on Kaggle), or Tavily/Brave/Serper
+backends when their keys are set. Registered as `web_search`, so the
+cinematic pipeline's research stage is finally resolvable and the
+harness/agent can ground scripts in live facts.
+
+---
+
 ## How It Works
 
 OpenMontage uses an **agent-first architecture**. There is no code orchestrator. Your AI coding assistant IS the orchestrator.
