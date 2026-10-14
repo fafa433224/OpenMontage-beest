@@ -303,7 +303,7 @@ def main() -> int:
 
     for name, fn, peak in SFX_SPECS:
         p = out / name
-        if p.exists() and not args.force:
+        if p.exists() and not args.force and p.stat().st_size > 4_000:
             print(f"reuse {name}")
             continue
         mono = fn()
@@ -313,7 +313,7 @@ def main() -> int:
 
     bgm_wav = out / "bgm.wav"
     bgm_mp3 = out / "bgm.mp3"
-    if bgm_mp3.exists() and not args.force:
+    if bgm_mp3.exists() and not args.force and bgm_mp3.stat().st_size > 50_000:
         print("reuse bgm.mp3")
     else:
         import subprocess

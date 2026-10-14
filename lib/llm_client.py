@@ -175,12 +175,19 @@ def resolve_provider() -> dict[str, Any]:
     # 1. Explicit custom endpoint
     base = _env("LLM_BASE_URL")
     if base:
+        # LLM_STYLE overrides the wire protocol for custom endpoints:
+        # "openai" (chat/completions, the default) or "anthropic" (messages).
+        # Without it we auto-detect Anthropic's own endpoints so pointing
+        # LLM_BASE_URL at api.anthropic.com alone keeps working.
+        style = _env("LLM_STYLE").lower()
+        if style not in ("openai", "anthropic"):
+            style = "anthropic" if "anthropic.com" in base else "openai"
         return {
             "provider": _env("LLM_PROVIDER") or "custom",
             "base_url": base.rstrip("/"),
             "api_key": _env("LLM_API_KEY"),
             "model": _env("LLM_MODEL") or "auto",
-            "style": "openai",
+            "style": style,
         }
 
     # 2. Named provider
@@ -246,6 +253,7 @@ class LLMClient:
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         provider: Optional[str] = None,
+        style: Optional[str] = None,
         timeout: float = 120.0,
         max_retries: int = 2,
     ) -> None:
@@ -254,7 +262,14 @@ class LLMClient:
         self.api_key = api_key if api_key is not None else resolved["api_key"]
         self.model = model or resolved["model"]
         self.provider = provider or resolved["provider"] or "custom"
-        self.style = resolved["style"] if base_url is None else "openai"
+        # Protocol style precedence: explicit arg > resolved env (presets,
+        # LLM_STYLE) > "openai" when a raw base_url is passed directly.
+        if style in ("openai", "anthropic"):
+            self.style = style
+        elif base_url is None:
+            self.style = resolved["style"]
+        else:
+            self.style = "openai"
         self.timeout = timeout
         self.max_retries = max_retries
         self.available = bool(self.base_url)
@@ -305,7 +320,7 @@ class LLMClient:
         temperature: Optional[float],
         max_tokens: Optional[int],
     ) -> str:
-        if self.style == "anthropic" and "anthropic.com" in self.base_url:
+        if self.style == "anthropic":
             return self._chat_anthropic(messages, temperature, max_tokens)
         return self._chat_openai(messages, temperature, max_tokens)
 

@@ -278,7 +278,12 @@ STYLES = {
 
 
 def encode_clip(frames_iter, out_path: Path, seconds: int, scale_to: str = "1920:1080") -> None:
-    """Pipe numpy frames → ffmpeg → H.264 with the repo's stock-clip contract."""
+    """Pipe numpy frames → ffmpeg → H.264 with the repo's stock-clip contract.
+
+    Writes to a temp sibling first and renames atomically, so an interrupted
+    run never leaves a truncated file that later "reuse" checks would trust.
+    """
+    tmp = out_path.with_suffix(out_path.suffix + ".part")
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS),
@@ -287,14 +292,38 @@ def encode_clip(frames_iter, out_path: Path, seconds: int, scale_to: str = "1920
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
         "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
         "-movflags", "+faststart", "-an",
-        str(out_path),
+        # .part carries no recognizable extension — force the mp4 muxer.
+        "-f", "mp4",
+        str(tmp),
     ]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    for frame in frames_iter:
-        proc.stdin.write(frame.tobytes())
-    proc.stdin.close()
-    if proc.wait() != 0:
-        raise RuntimeError(f"ffmpeg failed for {out_path}")
+    try:
+        for frame in frames_iter:
+            proc.stdin.write(frame.tobytes())
+        proc.stdin.close()
+        if proc.wait() != 0:
+            raise RuntimeError(f"ffmpeg failed for {out_path}")
+    except BaseException:
+        # Kill ffmpeg on any failure (incl. KeyboardInterrupt / OOM in the
+        # generator) so the .part file is never mistaken for a good clip.
+        proc.kill()
+        proc.wait()
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.replace(out_path)
+
+
+def _reusable(path: Path, min_bytes: int = 200_000) -> bool:
+    """A staged clip is reusable only when it is plausibly complete.
+
+    Crash leftovers (headers-only files from an interrupted encode) must be
+    regenerated, not reused — a 48-byte .mp4 passes ``exists()`` but breaks
+    playback later. 200 KB is far below any real 8s 1080p clip (~0.5 MB) and
+    far above a truncated stub."""
+    try:
+        return path.stat().st_size >= min_bytes
+    except OSError:
+        return False
 
 
 def main() -> int:
@@ -313,7 +342,7 @@ def main() -> int:
     for name in styles:
         for world, pal in (("cool", COOL), ("warm", WARM)):
             final = out / f"{name}-{world}.mp4"
-            if final.exists() and not args.force:
+            if not args.force and _reusable(final):
                 print(f"reuse {final.name}")
                 continue
             gen = STYLES[name](pal, n)

@@ -6,3 +6,9 @@ torchvision>=0.15
 # Vector DB for the Open-Sora-Dataset local corpus (CLIP ANN search).
 # Optional but recommended on Kaggle/GPU boxes; see tools/video/open_sora_index.py.
 lancedb>=0.15
+# Speech transcription (tools/analysis/transcriber.py, faster-whisper).
+# av (PyAV) 14+ removed the `metadata_errors` kwarg that faster-whisper
+# 1.2.1 still passes to av.open() — until faster-whisper ships a fix,
+# keep av on the 13.x line.
+faster-whisper>=1.0
+av>=13.0,<14
