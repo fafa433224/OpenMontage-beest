@@ -40,11 +40,13 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Any, Optional
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from build_explainer_props import build_props  # noqa: E402
+from scene_media import prepare_scene_media  # noqa: E402
 
 HYPERFRAMES_TEMPLATES = HERE / "hyperframes"
 
@@ -180,6 +182,77 @@ def synth_assets(composer: Path, skip: bool, skip_broll: bool = False) -> None:
         print("real Open-Sora footage staged — skipping synth b-roll generation", flush=True)
         return
     sh(f"'{sys.executable}' '{HERE / 'synth_broll.py'}' --out-dir '{pub / 'broll'}' --seconds 8")
+
+
+def preflight_props(props: dict, composer: Path) -> list[str]:
+    """Verify every asset the props reference exists BEFORE the render starts.
+
+    Why this exists: Remotion hard-fails the entire render on a missing
+    audio/video/image asset, and it fails *tens of seconds in* — which on a
+    Kaggle session means a long render is lost to a missing 20 KB SFX file.
+    (Observed: a 73 s body render died at frame 102 on a missing
+    ``audio/whoosh.wav``.)
+
+    Two levels of response, deliberately different:
+
+    * **Required** assets (narration, b-roll) — a missing one is a real
+      error and comes back as a hard failure for the caller to raise.
+    * **Optional** assets (music bed, SFX) — a missing one is *healed*:
+      the reference is dropped from the props and a warning is printed.
+      A missing sting should never cost a session its render.
+
+    Returns the list of hard failures (empty = safe to render).
+    """
+    public = composer / "public"
+    failures: list[str] = []
+    healed: list[str] = []
+
+    def resolve(rel: str) -> Path:
+        """Resolve a props asset path against remotion's public/ dir."""
+        cleaned = str(rel or "").lstrip("/")
+        if cleaned.startswith("public/"):
+            cleaned = cleaned[len("public/"):]
+        return public / cleaned
+
+    # --- narration: required -------------------------------------------------
+    narration = (props.get("audio") or {}).get("narration") or {}
+    nsrc = narration.get("src")
+    if nsrc and not resolve(nsrc).exists():
+        failures.append(f"narration audio missing: {nsrc} -> {resolve(nsrc)}")
+
+    # --- music bed: optional, healable --------------------------------------
+    music = (props.get("audio") or {}).get("music") or {}
+    msrc = music.get("src")
+    if msrc and not resolve(msrc).exists():
+        props["audio"].pop("music", None)
+        healed.append(f"music bed {msrc} missing — rendered without music")
+
+    # --- SFX: optional, healable --------------------------------------------
+    sfx = props.get("sfx")
+    if isinstance(sfx, list):
+        kept = [c for c in sfx if resolve(c.get("src", "")).exists()]
+        dropped = len(sfx) - len(kept)
+        if dropped:
+            props["sfx"] = kept
+            healed.append(f"{dropped} SFX cue(s) dropped (assets missing)")
+
+    # --- cut media: b-roll is a warning, not a failure -----------------------
+    # A missing b-roll clip leaves a valid scene on its own background, so
+    # this degrades rather than fails. Reported because it silently changes
+    # the look.
+    missing_broll = 0
+    for cut in props.get("cuts") or []:
+        for key in ("backgroundVideo", "backgroundImage"):
+            src = cut.get(key)
+            if src and not resolve(src).exists():
+                cut.pop(key, None)
+                missing_broll += 1
+    if missing_broll:
+        healed.append(f"{missing_broll} b-roll reference(s) dropped (assets missing)")
+
+    for note in healed:
+        print(f"WARNING: preflight healed — {note}", flush=True)
+    return failures
 
 
 def render_hyperframes(work: Path, template: str, sfx_names: list, out_mp4: Path,
@@ -464,12 +537,30 @@ def main() -> int:
                                 seed=script.get("topic"),
                                 brief=brief,
                                 broll_pool=broll_entries or None,
-                                brand_profile=brand)
+                                brand_profile=brand,
+                                motion_mode=args.motion)
             print("cuts", len(props["cuts"]), "captions", len(props["captions"]),
                   "sfx", len(props.get("sfx", [])),
                   "caption style", props.get("captionStyle", {}).get("look"),
                   "mood", props.get("creativeBrief", {}).get("mood"),
                   "channel", props.get("creativeBrief", {}).get("channel"))
+            plan = props.get("motionPlan")
+            if plan:
+                print(f"motion plan: {plan['compiled']} compiled / "
+                      f"{plan['fallbackToTemplate']} template, "
+                      f"{plan['distinctSchemes']} distinct schemes",
+                      flush=True)
+
+    # 3b. PREFLIGHT — every referenced asset must resolve before we render.
+    # Missing optional assets are healed here; missing required ones fail now
+    # with a readable message instead of 40 s into the render.
+    with stage("3b_preflight"):
+        hard_failures = preflight_props(props, composer)
+    if hard_failures:
+        raise RuntimeError(
+            "props preflight failed — fix these before rendering:\n  - "
+            + "\n  - ".join(hard_failures)
+        )
 
     props_path = out_dir / f"{args.name}-props.json"
     props_path.write_text(json.dumps(props, indent=1, ensure_ascii=False))
@@ -487,11 +578,73 @@ def main() -> int:
         have_real_broll = bool(timing.get("broll_source") == "open_sora")
         synth_assets(composer, args.skip_asset_synth, skip_broll=have_real_broll)
 
+    # 4c. Resolve the compiled scenes' loops ONCE, here, instead of leaving a
+    #     `<Loop>` + trim for the renderer to re-derive per frame. That
+    #     construct is what makes Remotion's multi-worker compositor fail
+    #     intermittently ("No frame found at position …"); a clip that is
+    #     already exactly the scene's length has no loop phase to disagree
+    #     about. Skipped silently when ffmpeg is absent — the render still
+    #     works, just on the retry-ladder path.
+    with stage("4c_bake_scene_media"):
+        try:
+            rep = prepare_scene_media(props, composer, project_id=args.name)
+            if rep["prepared"]:
+                props_path.write_text(json.dumps(props, indent=1, ensure_ascii=False))
+                print(f"pre-baked {len(rep['prepared'])} scene clip(s), "
+                      f"{rep['seconds']:.1f}s of footage", flush=True)
+            if rep["skipped"]:
+                print(f"  {len(rep['skipped'])} scene(s) left on the render-time path: "
+                      f"{[s['why'] for s in rep['skipped']][:2]}", flush=True)
+        except Exception as exc:  # noqa: BLE001 — never lose a render to prep
+            print(f"WARNING: scene-media pre-bake unavailable ({exc}) — "
+                  f"rendering with render-time loops", flush=True)
+
+    def render_body(conc: Optional[int], out_path: Path) -> tuple[bool, str]:
+        flag = f" --concurrency={conc}" if conc else ""
+        cmd = (f"npx remotion render src/index.tsx Explainer '{out_path}' --props '{props_path}' "
+               f"--codec h264 --timeout 120000{flag} --log info")
+        try:
+            sh(cmd, cwd=composer)
+            return True, ""
+        except Exception as exc:  # noqa: BLE001 — the message decides the retry
+            return False, str(exc)
+
     body = out_dir / f"{args.name}-body.mp4"
     with stage("5_remotion_render"):
-        conc = f" --concurrency={args.concurrency}" if args.concurrency else ""
-        sh(f"npx remotion render src/index.tsx Explainer '{body}' --props '{props_path}' "
-           f"--codec h264 --timeout 120000{conc} --log info", cwd=composer)
+        # --- worker count: measured, not assumed -------------------------
+        # Remotion's --concurrency runs independent render processes that
+        # share one extracted-asset directory. In this headless container
+        # that configuration corrupts the compositor's frame lookup at
+        # random: "Compositor error: No frame found at position 5632 for
+        # source .../remotion-assets-dir/<hash>.mp4".
+        #
+        # Measured on a 2190-frame render, identical props and command:
+        #     concurrency 2  ->  4 failures / 6 attempts
+        #     concurrency 1  ->  0 failures / 4 attempts
+        # and the failure is independent of the footage (raw synth clip and
+        # pre-baked clip both hit it), independent of trim (with and without
+        # trimBefore/trimAfter) and independent of looping (with and without
+        # <Loop>). It lands on a different frame each time, which is what a
+        # multi-process race looks like and what no amount of correct props
+        # can prevent.
+        #
+        # So the default is ONE worker. The body pass is ~2 minutes of a
+        # ~20-minute Kaggle session; a random hard failure that costs the
+        # whole session is not worth 1.3 minutes. Passing --concurrency
+        # explicitly still works, and a race then retries single-worker
+        # instead of failing.
+        conc = args.concurrency if args.concurrency is not None else 1
+        if conc != 1:
+            print(f"NOTE: rendering with {conc} workers (explicitly requested); "
+                  f"a compositor frame race will retry single-worker.", flush=True)
+        ok, err = render_body(conc, body)
+        if not ok and conc > 1 and "No frame found" in err:
+            print(f"WARNING: render failed at --concurrency={conc} with a compositor "
+                  f"frame race; retrying single-worker (slower but deterministic).",
+                  flush=True)
+            ok, err = render_body(1, body)
+        if not ok:
+            raise RuntimeError(f"remotion render failed: {err[-400:]}")
 
     # 5b. HyperFrames intro + outro, then concat into ONE video.
     #     Failures here (missing Chrome libs, runtime quirks) must NOT lose

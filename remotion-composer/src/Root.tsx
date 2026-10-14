@@ -16,6 +16,43 @@ import { ProductReveal, ProductRevealProps } from "./components/ProductReveal";
 import { CaptionOverlay, WordCaption } from "./components/CaptionOverlay";
 import { CollageBurst, CollageBurstProps } from "./CollageBurst";
 import { LyricOverlay, LyricOverlayProps } from "./LyricOverlay";
+import { BespokeScene, type ChoreographySpec } from "./motion/BespokeScene";
+import { DEFAULT_THEME } from "./theme";
+
+/**
+ * Preview / QC composition for compiled choreography. Renders a single
+ * ChoreographySpec standalone so a spec can be inspected (and rendered as
+ * stills) without building a whole Explainer props file — the loop the
+ * visual director uses to look at a scene before committing to a full run.
+ */
+const BespokePreview: React.FC<{ spec: ChoreographySpec | null }> = ({ spec }) => {
+  if (!spec) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          background: "#0B0E1A",
+          color: "#F7F9FF",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "sans-serif",
+          fontSize: 40,
+        }}
+      >
+        pass a `spec` prop
+      </div>
+    );
+  }
+  return (
+    <BespokeScene
+      spec={spec}
+      standalone
+      fonts={{ heading: DEFAULT_THEME.headingFont, body: DEFAULT_THEME.bodyFont }}
+    />
+  );
+};
 
 // The theme system now lives in ./theme.ts (extracted to break the
 // Root -> Explainer -> Root circular import). Re-exported here so every
@@ -218,6 +255,22 @@ export const Root: React.FC = () => {
           holdSeconds: 4.3,
           fadeOutSeconds: 0.6,
         } as EndTagProps}
+      />
+      <Composition
+        id="BespokePreview"
+        component={BespokePreview}
+        // 8s at 30fps. Real scenes pass their own durationSeconds; the
+        // preview's durationInFrames is overridable via --props.
+        durationInFrames={240}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={{ spec: null }}
+        calculateMetadata={async ({ props }) => {
+          const s = props.spec as ChoreographySpec | null;
+          const secs = s && typeof s.durationSeconds === "number" ? s.durationSeconds : 8;
+          return { durationInFrames: Math.max(1, Math.round(secs * 30)) };
+        }}
       />
       <Composition
         id="EndTagOverlay"

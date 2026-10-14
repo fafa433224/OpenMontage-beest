@@ -1,4 +1,4 @@
-"""Review stage — QC tripwires plus an optional LLM review round.
+"""Review stage — QC tripwires plus the visual audit and an LLM review round.
 
 Tripwires (hard, deterministic — the "don't trust green CI" layer):
 
@@ -6,6 +6,17 @@ Tripwires (hard, deterministic — the "don't trust green CI" layer):
 * duration error vs (voiceover + intro + outro) < 4s
 * word coverage > 80% when transcription numbers are known
 * stream resolution is the target 1920x1080 (or the brand/platform profile)
+
+**Visual audit** (``harness.vision``) — the stage that makes this pipeline
+*look* at its own output. Deterministic frame metrics catch the creative
+failure modes the ffprobe tripwires structurally cannot: scenes that never
+animate, a video whose scenes all look alike, unreadable contrast, dead or
+blown frames. When a vision-capable model is configured it additionally
+watches the sampled frames and returns a per-scene critique — the
+inspect-and-revise mechanic that separates Fable-class agents from blind
+renderers. It is advisory in the sense that it never blocks a delivery on
+model availability, but its *deterministic* findings are hard: a video whose
+scenes are all identical is not a pass.
 
 The LLM review (when a runtime model is configured) reads the QC json +
 the plan's own qa_notes and produces a written review saved to the
@@ -59,8 +70,11 @@ Answer with ONLY a JSON object:
 def review_project(
     *, project_id: str, out_dir: Path, name: str, script: dict,
     llm: Any, final: Path,
+    skip_visual: bool = False,
+    vision_enabled: bool = True,
+    fast_visual: bool = False,
 ) -> dict[str, Any]:
-    verdict: dict[str, Any] = {"pass": True, "checks": [], "issues": []}
+    verdict: dict[str, Any] = {"pass": True, "checks": [], "issues": [], "visual": None}
 
     def check(ok: bool, label: str, detail: str = "") -> None:
         verdict["checks"].append({"check": label, "ok": bool(ok), "detail": detail})
@@ -106,6 +120,43 @@ def review_project(
     if width := v.get("width"):
         check(int(width) >= 1080, "resolution_target", f"{v.get('width')}x{v.get('height')}")
 
+    # --- visual audit: look at the frames --------------------------------
+    visual: Optional[dict[str, Any]] = None
+    if not skip_visual:
+        try:
+            from harness.vision import audit_report_text, scene_spans_from_timing, visual_audit
+
+            timing_payload = {}
+            if timing_path.exists():
+                timing_payload = json.loads(timing_path.read_text())
+            spans = scene_spans_from_timing(timing_payload, vdur) or None
+            # The vision critic only runs when the model actually supports
+            # images; a text-only endpoint would waste a call and 400.
+            vision_llm = llm if (llm is not None and vision_enabled) else None
+            visual = visual_audit(
+                final, out_dir,
+                scene_spans=spans, llm=vision_llm, script=script,
+                samples_per_scene=3 if not fast_visual else 2,
+                # --fast-visual trades fidelity for time. It must not fake
+                # legibility confidence: at 640 px the sample cannot see
+                # whether thin type survived, and vision.py downgrades those
+                # findings to advisory on its own from this value.
+                frame_width=1280 if not fast_visual else 640,
+            )
+            metrics = visual.get("metrics") or {}
+            check(bool(visual.get("pass")), "visual_audit",
+                  f"variety {metrics.get('variety_ratio', 0):.0%}, "
+                  f"motion {metrics.get('motion_energy_mean', 0):.4f}, "
+                  f"contrast {metrics.get('contrast_min', 0):.3f}")
+            for issue in (visual.get("issues") or []):
+                if issue.get("severity") == "high":
+                    verdict["issues"].append(
+                        f"visual[{issue.get('severity')}]: {issue.get('problem')}"
+                    )
+            print(audit_report_text(visual), flush=True)
+        except Exception as exc:  # never let the audit lose a good render
+            print(f"[harness] visual audit unavailable: {exc}", flush=True)
+
     # --- LLM review (advisory) ------------------------------------------
     llm_review = None
     if llm is not None:
@@ -133,6 +184,16 @@ def review_project(
                 llm_review = review
         except Exception:
             pass  # advisory only
+
+    if visual is not None:
+        verdict["visual"] = visual
+        # A video whose scenes all look alike is the exact defect this repo
+        # exists to fix; it must never read as a pass.
+        if any(i.get("severity") == "high" for i in visual.get("issues") or []):
+            verdict["pass"] = False
+            for issue in visual["issues"]:
+                if issue.get("severity") == "high":
+                    verdict["issues"].append(f"visual: {issue.get('problem')}")
 
     verdict["llm_review"] = llm_review
 

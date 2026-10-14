@@ -179,6 +179,9 @@ def run_project(
     no_llm: bool = False,
     single_gpu: bool = False,
     render_extra_args: Optional[list[str]] = None,
+    fast_visual: bool = False,
+    skip_visual: bool = False,
+    vision_review: bool = True,
 ) -> dict[str, Any]:
     """One command: input → finished video. Returns the summary dict."""
     t0 = time.time()
@@ -301,7 +304,11 @@ def run_project(
             "--motion", motion,
             "--broll-source", broll_source,
         ]
-        if concurrency:
+        # Remotion's multi-worker mode races the compositor's frame cache in
+        # a headless container (measured 4 failures / 6 attempts at 2 workers
+        # vs 0 / 4 at 1). Pass the flag only when asked for explicitly; the
+        # render stage defaults to a single deterministic worker.
+        if concurrency and concurrency != 1:
             render_cmd += ["--concurrency", str(concurrency)]
         if no_llm or llm is None:
             render_cmd += ["--no-llm"]
@@ -328,6 +335,9 @@ def run_project(
     verdict = review_project(
         project_id=project_id, out_dir=out, name=name, script=script,
         llm=llm, final=final_mp4,
+        skip_visual=skip_visual,
+        vision_enabled=vision_review,
+        fast_visual=fast_visual,
     )
     _mark(state, "review", verdict="pass" if verdict["pass"] else "fail")
 
@@ -339,6 +349,7 @@ def run_project(
         "channel": channel,
         "motion": motion,
         "seconds": round(time.time() - t0, 1),
+        "visual": (verdict.get("visual") or {}).get("metrics"),
     }
     summary_path = _projects_dir() / project_id / "harness-summary.json"
     summary_path.write_text(json.dumps(summary, indent=1))
@@ -381,6 +392,9 @@ def resume_project(project_id: str, **overrides: Any) -> dict[str, Any]:
         broll_source=opts.get("broll_source", "auto"),
         no_llm=opts.get("no_llm", False),
         single_gpu=opts.get("single_gpu", False),
+        fast_visual=bool(opts.get("fast_visual", False)),
+        skip_visual=bool(opts.get("skip_visual", False)),
+        vision_review=bool(opts.get("vision_review", True)),
     )
 
 

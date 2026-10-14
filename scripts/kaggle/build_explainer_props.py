@@ -57,11 +57,48 @@ from lib.creative_director import (  # noqa: E402
     detect_stat,
     llm_creative_brief,
 )
+from lib.motion_compiler import compile_scene, compile_video, lint_spec  # noqa: E402
 
 __all__ = [
     "build_props", "TRANSITIONS", "BG_STYLES", "ALIGNS", "TYPE_TRANSITIONS",
     "HERO_BG_STYLES", "CAPTION_STYLE_PACKS", "STOPWORDS",
+    "_scene_class_for",
 ]
+
+#: Stock cut type → content class for the motion compiler. The compiler picks
+#: schemes legal for the class, so a data cut gets data-shaped structure and a
+#: quote gets a quote-shaped one.
+_CUT_TYPE_TO_CLASS = {
+    "stat_card": "data",
+    "kpi_grid": "data",
+    "progress_bar": "data",
+    "bar_chart": "data",
+    "line_chart": "data",
+    "pie_chart": "data",
+    "comparison": "list",
+    "callout": "quote",
+    "hero_title": "hero",
+    "text_card": "statement",
+    "terminal_scene": "list",
+    "screenshot_scene": "statement",
+}
+
+
+def _scheme_at(schemes: Optional[list], index: int) -> Optional[str]:
+    """Guarded ring lookup — an out-of-range or absent ring is not an error."""
+    if not schemes or index < 0 or index >= len(schemes):
+        return None
+    return schemes[index]
+
+
+def _scene_class_for(cut_type: str, text: str) -> str:
+    """Content class for a compiled scene: stock type first, then content."""
+    cls = _CUT_TYPE_TO_CLASS.get(cut_type)
+    if cls:
+        return cls
+    from lib.motion_compiler import classify_content
+
+    return classify_content({"text": text})
 
 # Default b-roll pool (scripts/kaggle/synth_broll.py output). Entries may be
 # plain paths (duration assumed 8.0s, matching the synth generator) or dicts
@@ -161,8 +198,15 @@ def _synthesise_kpi(items: list[str]) -> Optional[dict[str, Any]]:
 
 def build_section(director: CreativeDirector, broll: list[dict[str, Any]],
                   broll_state: dict, idx: int, total: int, sec: dict,
-                  start: float, dur: float, cut_counter: int):
+                  start: float, dur: float, cut_counter: int,
+                  *, motion_mode: str = "auto", brand: Any = None,
+                  project_id: str = "default",
+                  spec_schemes: Optional[list[Optional[str]]] = None,
+                  spec_continuity: Optional[dict[str, Any]] = None,
+                  spec_rejected: Optional[list[dict[str, Any]]] = None):
     cuts = []
+    spec_continuity = spec_continuity if spec_continuity is not None else {}
+    spec_rejected = spec_rejected if spec_rejected is not None else []
     t = start
     hero = min(3.5, dur * max(0.18, director.hero_duration_fraction()))
     section_palette = director.palette_for_section(idx, total)
@@ -191,6 +235,43 @@ def build_section(director: CreativeDirector, broll: list[dict[str, Any]],
             "backgroundVideoDuration": br["duration"],
             "backgroundOverlay": 0.42,
         })
+
+    # Heroes get compiled too. They recur once per section, so leaving them on
+    # a fixed component is exactly the structural repetition we are removing —
+    # and now that compiled scenes carry footage, the hero keeps its b-roll.
+    if motion_mode in ("code2motion", "auto"):
+        try:
+            hero_spec = compile_scene(
+                {
+                    "heading": sec["heading"],
+                    "kicker": f"Part {idx + 1}" if total > 1 else "",
+                    "stat": "",
+                    "scene_class": "hero",
+                    "backgroundVideo": hero_cut.get("backgroundVideo"),
+                    "backgroundVideoStart": hero_cut.get("backgroundVideoStart"),
+                    "backgroundVideoDuration": hero_cut.get("backgroundVideoDuration"),
+                    "backgroundOverlay": hero_cut.get("backgroundOverlay"),
+                },
+                brand, project_id,
+                index=1000 + cut_counter,
+                duration=hero,
+                section_palette=section_palette,
+                scheme=_scheme_at(spec_schemes, cut_counter),
+            )
+            if not lint_spec(hero_spec):
+                hero_spec["bgStyle"] = hero_cut.get("bgStyle")
+                hero_cut = {
+                    **hero_cut,
+                    "type": "bespoke",
+                    "bespoke": hero_spec,
+                    "fallbackType": "hero_title",
+                }
+            else:
+                spec_rejected.append({"scene": cut_counter, "role": "hero",
+                                      "problems": lint_spec(hero_spec)[:4]})
+        except Exception as exc:
+            spec_rejected.append({"scene": cut_counter, "role": "hero", "error": str(exc)})
+
     cuts.append(hero_cut)
     t += hero
     rest = start + dur - t
@@ -238,6 +319,52 @@ def build_section(director: CreativeDirector, broll: list[dict[str, Any]],
         else:
             cut = {**base, "type": "text_card", "text": text}
 
+        # ---- Code2motion for the BODY: compile a bespoke choreography ----
+        # The stock component above becomes the ladder's fallback, not the
+        # finished scene. This is the change that stops the body of the video
+        # being a rearrangement of the same component vocabulary.
+        original_type = cut["type"]
+        if motion_mode in ("code2motion", "auto"):
+            try:
+                spec = compile_scene(
+                    {
+                        "heading": sec["heading"],
+                        "text": text,
+                        "kicker": kicker_base if gi % 2 == 0 else "",
+                        "stat": stat or "",
+                        "scene_class": _scene_class_for(cut["type"], text),
+                    },
+                    brand,
+                    project_id,
+                    index=cut_counter + gi,
+                    duration=d,
+                    section_palette=section_palette,
+                    scheme=_scheme_at(spec_schemes, cut_counter + 1 + gi),
+                    continuity=spec_continuity.get("last"),
+                )
+                problems = lint_spec(spec)
+                if not problems:
+                    spec["bgStyle"] = cut.get("bgStyle")
+                    spec_continuity["last"] = spec.get("continuity")
+                    cut = {
+                        **base,
+                        "type": "bespoke",
+                        "bespoke": spec,
+                        # Everything above stays as the fallback path so a
+                        # malformed spec degrades to the old, proven scene
+                        # rather than to a blank frame.
+                        "fallbackType": original_type,
+                        "text": text,
+                        "transition": cut.get("transition"),
+                        "bgStyle": cut.get("bgStyle"),
+                        "sectionIndex": idx,
+                        "sectionCount": total,
+                    }
+                else:
+                    spec_rejected.append({"scene": cut_counter + gi, "problems": problems[:4]})
+            except Exception as exc:  # never fatal — template path remains
+                spec_rejected.append({"scene": cut_counter + gi, "error": str(exc)})
+
         # ---- Creative direction (seeded, per cut) ----
         ctype = cut["type"]
         cut["transition"] = director.transition(ctype, cut_counter + gi)
@@ -268,26 +395,41 @@ def build_section(director: CreativeDirector, broll: list[dict[str, Any]],
     return cuts
 
 
+def cut_role(cut: dict[str, Any]) -> str:
+    """The semantic role of a cut, independent of who renders it.
+
+    A compiled (`bespoke`) scene carries the stock type it replaced in
+    ``fallbackType``. Cue sheets, QC and any other role-based logic must ask
+    for the ROLE, not the renderer — asking for the type is how bespoke heroes
+    silently lost their impact/riser stings (regression test:
+    ``test_bespoke_heroes_still_get_impact_and_riser``).
+    """
+    if cut.get("type") == "bespoke":
+        return str(cut.get("fallbackType") or "text_card")
+    return str(cut.get("type") or "text_card")
+
+
 def build_sfx(cuts):
     """Sound-effect cue sheet derived from the cut plan (with cue windows)."""
     sfx = []
     seen_whoosh = set()
     for i, c in enumerate(cuts):
         t_in = c["in_seconds"]
+        role = cut_role(c)
         if i > 0 and t_in not in seen_whoosh:
             sfx.append({"src": "audio/whoosh.wav", "atSeconds": round(t_in - 0.12, 3),
                         "volume": 0.32, "durationSeconds": 2.0})
             seen_whoosh.add(t_in)
-        if c["type"] == "hero_title":
+        if role == "hero_title":
             sfx.append({"src": "audio/impact.wav", "atSeconds": round(t_in + 0.1, 3),
                         "volume": 0.5, "durationSeconds": 2.5})
             if t_in > 1.6:
                 sfx.append({"src": "audio/riser.wav", "atSeconds": round(t_in - 1.35, 3),
                             "volume": 0.26, "durationSeconds": 2.0})
-        elif c["type"] == "stat_card":
+        elif role == "stat_card":
             sfx.append({"src": "audio/pop.wav", "atSeconds": round(t_in + 0.45, 3),
                         "volume": 0.42, "durationSeconds": 1.5})
-        elif c["type"] == "progress_bar":
+        elif role == "progress_bar":
             mid = (c["in_seconds"] + c["out_seconds"]) / 2
             sfx.append({"src": "audio/chime.wav", "atSeconds": round(mid, 3),
                         "volume": 0.34, "durationSeconds": 2.0})
@@ -306,6 +448,7 @@ def build_props(
     theme: str = "flat-motion-graphics",
     bg: str = "#0F172A",
     brand_profile: Any = None,
+    motion_mode: str = "auto",
 ) -> dict:
     """Build Explainer props.
 
@@ -345,9 +488,12 @@ def build_props(
     brand_overlay: Optional[dict] = None
     theme_config: Optional[dict] = None
     channel_id = ""
+    # Raw project identity, before it is folded into the channel seed. The
+    # motion compiler must key off THIS, so a channel change alters the
+    # brand envelope without also re-rolling every scene's choreography.
+    project_id = str(seed)
     if brand_profile is not None:
         channel_id = getattr(brand_profile, "channel_id", "")
-        project_id = str(seed)
         # Bind the channel identity into the seed: same channel stays
         # recognisable, different projects drift, retries identical.
         seed = brand_profile.project_seed(project_id)
@@ -358,12 +504,35 @@ def build_props(
     director = CreativeDirector(seed=seed, brief=brief, brand=brand_anchors)
     broll = _normalize_broll(broll_pool if broll_pool is not None else DEFAULT_BROLL_POOL)
 
+    # Compiled scheme ring for the whole video: guarantees structural variety
+    # ACROSS the video, not just within one section. Without this, each
+    # section restarts the ring and long videos develop an audible/visible
+    # structural period.
+    spec_schemes: list[Optional[str]] = []
+    if motion_mode in ("code2motion", "auto"):
+        try:
+            preview = compile_video(
+                {"sections": secs}, brand_profile, project_id,
+            )
+            spec_schemes = [s["scheme"] for s in preview["scenes"]]
+        except Exception as exc:  # ring is an optimisation, never a gate
+            print(f"WARNING: scheme ring unavailable ({exc}) — "
+                  f"scenes will pick from the full vocabulary", flush=True)
+            spec_schemes = []
+
     cuts, start = [], 0.0
     cut_counter = 0
     broll_state = {"n": 0}
+    spec_continuity: dict[str, Any] = {}
+    spec_rejected: list[dict[str, Any]] = []
     for i, (sec, d) in enumerate(zip(secs, durations)):
-        section_cuts = build_section(director, broll, broll_state, i, len(secs), sec, start, d,
-                                     cut_counter)
+        section_cuts = build_section(
+            director, broll, broll_state, i, len(secs), sec, start, d, cut_counter,
+            motion_mode=motion_mode, brand=brand_profile,
+            project_id=project_id,
+            spec_schemes=spec_schemes, spec_continuity=spec_continuity,
+            spec_rejected=spec_rejected,
+        )
         cuts += section_cuts
         cut_counter += len(section_cuts)
         start += d
@@ -412,6 +581,41 @@ def build_props(
             "rationale": director.brief.get("rationale", ""),
         },
     }
+    # Motion compiler provenance — which scenes got a compiled choreography,
+    # which scheme each one landed on, and what fell back. This is the
+    # decision record that makes a "why does this video look like this"
+    # question answerable after the fact.
+    bespoke_cuts = [c for c in cuts if c.get("type") == "bespoke"]
+
+    # --- ONE OWNER PER ASSET -------------------------------------------------
+    # A compiled scene carries its footage inside the spec (`bespoke.media`).
+    # If the cut ALSO keeps the template's `backgroundVideo*` keys, the
+    # template wrapper renders the same file a second time — two independent
+    # readers seeking the same source at different trim points, which the
+    # compositor rejects outright:
+    #   "Compositor error: No frame found at position 10666 for source
+    #    .../bokeh-warm.mp4"
+    # The compiled spec is the owner; drop the redundant template keys.
+    for cut in bespoke_cuts:
+        for key in ("backgroundVideo", "backgroundVideoStart",
+                    "backgroundVideoDuration", "backgroundVideoEnd",
+                    "backgroundOverlay", "backgroundVideoLoop"):
+            cut.pop(key, None)
+
+    if bespoke_cuts:
+        props["motionPlan"] = {
+            "mode": motion_mode,
+            "compiled": len(bespoke_cuts),
+            "fallbackToTemplate": len(cuts) - len(bespoke_cuts),
+            "schemes": [c["bespoke"]["scheme"] for c in bespoke_cuts],
+            "distinctSchemes": len({c["bespoke"]["scheme"] for c in bespoke_cuts}),
+            "signatureMoments": [
+                c["bespoke"]["signature"]["moment"] for c in bespoke_cuts
+                if c["bespoke"]["signature"]["moment"] != "none"
+            ],
+            "rejected": spec_rejected[:12],
+            "continuity": spec_continuity.get("last"),
+        }
     # Brand plumbing — partial ThemeConfig merged over the default by
     # Root.resolveTheme, plus the BrandOverlay layer props (watermark,
     # wordmark, fonts). Both are optional on the TS side.

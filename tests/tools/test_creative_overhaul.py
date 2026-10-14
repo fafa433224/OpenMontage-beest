@@ -75,26 +75,93 @@ class TestCreativeDirection:
             prev = c["bgStyle"]
 
     def test_heroes_get_stock_footage(self, built_props):
-        heroes = [c for c in built_props["cuts"] if c["type"] == "hero_title"]
+        """Heroes keep their b-roll whether they render stock or compiled.
+
+        A compiled hero carries the footage inside its own spec (`media`), so
+        the assertion has to follow the role, not the component name.
+        """
+        from build_explainer_props import cut_role
+
+        heroes = [c for c in built_props["cuts"] if cut_role(c) == "hero_title"]
         assert len(heroes) == 3
         for h in heroes:
-            assert h["backgroundVideo"].startswith("broll/")
-            assert 0 <= h["backgroundVideoStart"] < 8
-            assert 0.3 <= h["backgroundOverlay"] <= 0.6
+            if h["type"] == "bespoke":
+                media = h["bespoke"].get("media")
+                assert media, "compiled hero must carry its footage"
+                assert media["src"].startswith("broll/")
+                assert 0 <= media["startSeconds"] < 8
+                assert 0.3 <= media["overlay"] <= 0.6
+            else:
+                assert h["backgroundVideo"].startswith("broll/")
+                assert 0 <= h["backgroundVideoStart"] < 8
+                assert 0.3 <= h["backgroundOverlay"] <= 0.6
 
     def test_broll_pool_rotation_uses_many_clips(self, built_props):
-        used = {c["backgroundVideo"] for c in built_props["cuts"] if c.get("backgroundVideo")}
-        assert len(used) >= 3, "b-roll should rotate, not repeat one clip"
+        """Footage rotates across the pool, whatever component renders it.
 
-    def test_text_cards_get_alignment_and_keywords(self, built_props):
+        Reads the source through the same door the renderer does: a compiled
+        cut owns its footage in `bespoke.media`, a template cut in
+        `backgroundVideo`. Asking only for the template key reported zero
+        clips used and looked like a rotation bug when it was a lookup bug.
+        """
+
+        def footage_source(cut):
+            media = (cut.get("bespoke") or {}).get("media")
+            return (media or {}).get("src") or cut.get("backgroundVideo")
+
+        used = {src for src in (footage_source(c) for c in built_props["cuts"]) if src}
+        assert len(used) >= 3, f"b-roll should rotate, not repeat one clip (got {used})"
+
+    def test_text_cards_get_alignment_and_keywords(self, props_mod):
+        """The template path still applies alignment + keyword highlighting.
+
+        Since the body-scene code2motion change, `build_props` compiles
+        bespoke choreography by default and `text_card` survives as the
+        ladder's fallback rather than the finished scene. The alignment /
+        accentWords contract therefore still has to hold for callers that
+        pin `motion_mode="template"`.
+        """
         from build_explainer_props import ALIGNS, STOPWORDS
-        cards = [c for c in built_props["cuts"] if c["type"] == "text_card"]
+        script = {
+            "sections": [
+                {"id": f"ts{i}", "heading": f"Heading {i}", "text": (
+                    "One two three sentence with words. " * 3).strip()}
+                for i in range(3)
+            ]
+        }
+        props = props_mod.build_props(script, [10.0, 10.0, 10.0], words=None,
+                                      motion_mode="template")
+        cards = [c for c in props["cuts"] if c["type"] == "text_card"]
         assert cards
         aligns = {c.get("align") for c in cards}
         assert aligns <= set(ALIGNS)
         for c in cards:
             for w in c.get("accentWords", []):
                 assert w.lower() not in STOPWORDS
+
+    def test_default_mode_compiles_bespoke_body_scenes(self, built_props):
+        """The default path must NOT emit stock component scenes.
+
+        This is the anti-template guarantee at the props layer: every
+        non-hero cut is a compiled choreography spec, each carrying a valid
+        one, and the plan records how many compiled.
+        """
+        bespoke = [c for c in built_props["cuts"] if c["type"] == "bespoke"]
+        assert bespoke, "default motion_mode should compile body scenes"
+        for c in bespoke:
+            spec = c["bespoke"]
+            assert spec["scheme"]
+            assert spec["layers"]
+            assert spec["version"] == 1
+            # The ladder's last rung must always be reachable.
+            assert c.get("fallbackType")
+
+    def test_motion_plan_records_the_creative_decisions(self, built_props):
+        plan = built_props.get("motionPlan")
+        assert plan, "props must carry a motionPlan decision record"
+        assert plan["compiled"] >= 1
+        assert plan["distinctSchemes"] >= 1
+        assert len(plan["schemes"]) == plan["compiled"]
 
     def test_props_root_fields(self, built_props):
         assert built_props["sectionCount"] == 3
@@ -117,12 +184,34 @@ class TestSfxCueSheet:
             assert s["atSeconds"] >= 0
 
     def test_heroes_get_impact_and_interior_sections_get_riser(self, built_props):
+        from build_explainer_props import cut_role
+
         cues = built_props["sfx"]
         impacts = [s for s in cues if s["src"] == "audio/impact.wav"]
         risers = [s for s in cues if s["src"] == "audio/riser.wav"]
-        heroes = [c for c in built_props["cuts"] if c["type"] == "hero_title"]
+        heroes = [c for c in built_props["cuts"] if cut_role(c) == "hero_title"]
         assert len(impacts) == len(heroes)
         assert len(risers) == len(heroes) - 1  # no riser before the first
+
+    def test_bespoke_heroes_still_get_impact_and_riser(self, props_mod):
+        """Regression: compiling heroes silently dropped their stings.
+
+        The cue sheet keyed on `cut["type"]`, which becomes "bespoke" once a
+        hero is compiled — so the impact and the riser vanished from every
+        branded video. Role-based lookup is the fix.
+        """
+        from build_explainer_props import cut_role
+
+        script = {"sections": [
+            {"id": f"x{i}", "heading": f"H{i}", "text": "A sentence here. " * 4}
+            for i in range(3)
+        ]}
+        props = props_mod.build_props(script, [10.0, 10.0, 10.0], words=None)
+        heroes = [c for c in props["cuts"] if cut_role(c) == "hero_title"]
+        assert heroes, "heroes should exist"
+        assert all(c["type"] == "bespoke" for c in heroes)
+        impacts = [s for s in props["sfx"] if s["src"] == "audio/impact.wav"]
+        assert len(impacts) == len(heroes)
 
     def test_progress_bars_get_chime_at_midpoint(self, built_props):
         for c in built_props["cuts"]:

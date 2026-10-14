@@ -27,6 +27,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         broll_source=args.broll_source,
         no_llm=args.no_llm,
         single_gpu=args.single_gpu,
+        fast_visual=args.fast_visual,
+        skip_visual=args.skip_visual,
+        vision_review=not args.no_vision,
     )
     status = summary.get("status")
     if status == "awaiting_approval":
@@ -46,6 +49,9 @@ def _cmd_resume(args: argparse.Namespace) -> int:
         no_llm=args.no_llm,
         single_gpu=args.single_gpu,
         out_dir=Path(args.out) if args.out else None,
+        fast_visual=args.fast_visual,
+        skip_visual=args.skip_visual,
+        vision_review=not args.no_vision,
     )
     return 0 if summary.get("status") == "complete" else 2
 
@@ -156,10 +162,71 @@ def _cmd_doctor(_: argparse.Namespace) -> int:
 
     from lib.brand_profile import list_channels
 
+    composer = REPO_ROOT / "remotion-composer"
     channels = list_channels()
     checks.append((len(channels) >= 1, "channels", ", ".join(channels)))
 
-    composer = REPO_ROOT / "remotion-composer"
+    # --- motion compiler: can the body be compiled instead of templated? ---
+    try:
+        from lib.motion_compiler import compile_video, lint_spec
+        from lib.brand_profile import load_brand
+
+        probe = compile_video(
+            {"sections": [{"heading": "doctor", "text": "probe sentence."}]},
+            load_brand(channels[0] if channels else "default"),
+            "doctor-probe",
+        )
+        bad = [p for spec in probe["scenes"] for p in lint_spec(spec)]
+        checks.append((not bad, "motion-compiler",
+                       f"{len(probe['scenes'])} scene(s) compiled clean" if not bad
+                       else f"lint failures: {bad[:2]}"))
+    except Exception as exc:
+        checks.append((False, "motion-compiler", f"unavailable: {exc}"))
+
+    # --- bespoke renderer present in the Remotion bundle -------------------
+    bespoke = composer / "src" / "motion" / "BespokeScene.tsx"
+    checks.append((bespoke.exists(), "bespoke-renderer",
+                   "present" if bespoke.exists()
+                   else "MISSING — body scenes cannot be compiled into motion"))
+
+    # --- visual audit: deterministic deps + optional vision ---------------
+    try:
+        import numpy  # noqa: F401
+        from PIL import Image  # noqa: F401
+
+        checks.append((True, "visual-audit", "numpy + Pillow present"))
+    except Exception:
+        checks.append((False, "visual-audit", "needs numpy + Pillow (requirements.txt)"))
+
+    # A vision model is what lets the review stage LOOK at sampled frames
+    # rather than only measure them. Absence is not a failure — the
+    # deterministic metrics still run — but it is worth surfacing.
+    checks.append((True, "vision-review",
+                   f"{status.get('provider')}/{status.get('model')} (frame critique enabled)"
+                   if status.get("available")
+                   else "no LLM — deterministic frame metrics only "
+                        "(set a vision-capable model for frame critique)"))
+
+    # Intro/outro card templates (the code2motion fallback floor).
+    hf = REPO_ROOT / "scripts" / "kaggle" / "hyperframes"
+    checks.append((all((hf / k / "index.html").exists() for k in ("intro", "outro")),
+                   "hyperframes-cards", "intro + outro templates present"))
+
+    # --- Figma: report the best available path ----------------------------
+    try:
+        from tools.integrations.figma_mcp import figma_probe
+
+        fig = figma_probe()
+        detail = {
+            "mcp": f"MCP at {fig['mcp_url']} ({len(fig['tools'])} tools)",
+            "rest-tokens": "REST/tokens only (FIGMA_TOKEN set)",
+            "mcp-configured": f"MCP configured at {fig['mcp_url']} (server unreachable now)",
+            "off": "not configured — design ingestion disabled",
+        }.get(fig["mode"], fig["mode"])
+        checks.append((fig["mode"] != "off", "figma", detail))
+    except Exception as exc:
+        checks.append((False, "figma", f"unavailable: {exc}"))
+
     checks.append(((composer / "package.json").exists(), "remotion-composer", "present"))
     checks.append(((composer / "node_modules").exists(), "node_modules",
                    "present" if (composer / "node_modules").exists()
@@ -211,6 +278,12 @@ def main() -> int:
     run.add_argument("--broll-source", choices=["auto", "synth", "open-sora"], default="auto")
     run.add_argument("--no-llm", action="store_true", help="seeded director only")
     run.add_argument("--single-gpu", action="store_true", help="pin everything to GPU 0")
+    run.add_argument("--fast-visual", action="store_true",
+                     help="2 audit samples per scene instead of 3 (saves a few seconds)")
+    run.add_argument("--skip-visual", action="store_true",
+                     help="skip the frame-level visual audit entirely")
+    run.add_argument("--no-vision", action="store_true",
+                     help="deterministic frame metrics only — no vision-model critique")
     run.set_defaults(func=_cmd_run)
 
     resume = sub.add_parser("resume", help="continue a checkpointed project")
@@ -222,6 +295,9 @@ def main() -> int:
     resume.add_argument("--broll-source", choices=["auto", "synth", "open-sora"], default=None)
     resume.add_argument("--no-llm", action="store_true")
     resume.add_argument("--single-gpu", action="store_true")
+    resume.add_argument("--fast-visual", action="store_true")
+    resume.add_argument("--skip-visual", action="store_true")
+    resume.add_argument("--no-vision", action="store_true")
     resume.set_defaults(func=_cmd_resume)
 
     status = sub.add_parser("status", help="show a project's harness state")

@@ -177,7 +177,12 @@ export const CameraDrift: React.FC<{
   durationInFrames: number;
   seed: number;
   children: React.ReactNode;
-}> = ({ durationInFrames, seed, children }) => {
+  /**
+   * Set false when the hosted scene compiles its own camera path
+   * (BespokeScene). Two cameras on one frame is seasickness, not style.
+   */
+  enabled?: boolean;
+}> = ({ durationInFrames, seed, children, enabled = true }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const t = frame / fps;
@@ -188,10 +193,10 @@ export const CameraDrift: React.FC<{
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const zoom = 1.015 + progress * 0.02;
+  const zoom = enabled ? 1.015 + progress * 0.02 : 1;
   const dir = seed % 2 === 0 ? 1 : -1;
-  const swayX = Math.sin(t * 0.35 + seed) * 7 * dir;
-  const swayY = Math.cos(t * 0.28 + seed) * 5;
+  const swayX = enabled ? Math.sin(t * 0.35 + seed) * 7 * dir : 0;
+  const swayY = enabled ? Math.cos(t * 0.28 + seed) * 5 : 0;
   // Guard: never drift more than the zoom headroom allows (no edge reveal).
   const _ = total; // referenced for clarity; zoom math above is frame-based
   return (

@@ -338,6 +338,117 @@ class LLMClient:
         except json.JSONDecodeError as exc:
             raise LLMError(f"non-JSON reply from {url}: {exc}") from exc
 
+    # ------------------------------------------------------------------
+    # Vision
+    # ------------------------------------------------------------------
+    def chat_vision(
+        self,
+        text: str,
+        images: list[Any],
+        *,
+        system: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        detail: str = "low",
+    ) -> str:
+        """Send a prompt plus images; return the assistant text.
+
+        ``images`` are file paths or ``(bytes, mime)`` tuples. Both wire
+        protocols are handled here so callers never branch on provider:
+        OpenAI-style endpoints get ``image_url`` data URIs, Anthropic gets
+        base64 ``source`` blocks.
+
+        This is what makes the visual self-inspection loop possible — the
+        model can LOOK at rendered frames, which is the mechanic that
+        separates Fable-class agents from blind renderers.
+
+        Raises :class:`LLMError` when no model is configured; callers treat
+        vision as optional and degrade to deterministic metrics.
+        """
+        if not self.available:
+            raise LLMError("No LLM configured for vision review.")
+
+        import base64
+        import mimetypes
+
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        for item in images:
+            if isinstance(item, (tuple, list)) and len(item) == 2:
+                raw, mime = item
+            else:
+                path = Path(str(item))
+                if not path.exists():
+                    continue
+                mime = mimetypes.guess_type(path.name)[0] or "image/png"
+                raw = path.read_bytes()
+            b64 = base64.b64encode(raw).decode("ascii")
+            if self.style == "anthropic":
+                parts.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": mime, "data": b64},
+                })
+            else:
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}", "detail": detail},
+                })
+
+        if self.style == "anthropic":
+            payload: dict[str, Any] = {
+                "model": self.model,
+                "max_tokens": max_tokens or 2000,
+                "messages": [{"role": "user", "content": parts}],
+            }
+            if system:
+                payload["system"] = system
+            if temperature is not None:
+                payload["temperature"] = temperature
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+            }
+            data = self._post_json(f"{self.base_url}/messages", payload, headers)
+            try:
+                return "".join(b.get("text", "") for b in data["content"])
+            except (KeyError, TypeError) as exc:
+                raise LLMError(f"unexpected anthropic vision reply: {json.dumps(data)[:400]}") from exc
+
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": parts})
+        payload = {"model": self.model, "messages": messages}
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        data = self._post_json(f"{self.base_url}/chat/completions", payload, headers)
+        try:
+            text_out = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMError(f"unexpected vision reply shape: {json.dumps(data)[:400]}") from exc
+        if not isinstance(text_out, str):
+            text_out = "".join(p.get("text", "") for p in text_out if isinstance(p, dict))
+        return text_out
+
+    def chat_vision_json(self, text: str, images: list[Any], **kw: Any) -> Any:
+        """``chat_vision`` expecting a JSON reply (one retry on parse failure)."""
+        reply = self.chat_vision(text, images, **kw)
+        parsed = _extract_json(reply)
+        if parsed is not None:
+            return parsed
+        repair = text + "\n\nYour previous reply was not parseable JSON. " \
+            "Reply with ONLY the raw JSON object — no prose, no fences."
+        reply2 = self.chat_vision(repair, images, **kw)
+        parsed = _extract_json(reply2)
+        if parsed is None:
+            raise LLMError(f"vision model did not return JSON. Last: {reply2[:300]}")
+        return parsed
+
     def _chat_openai(
         self,
         messages: list[dict[str, str]],

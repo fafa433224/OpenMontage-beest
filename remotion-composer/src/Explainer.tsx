@@ -54,6 +54,12 @@ import {
   transitionForCut,
   type TransitionStyle,
 } from "./motion/SceneTransition";
+import {
+  BespokeScene,
+  validateSpec,
+  type ChoreographySpec,
+} from "./motion/BespokeScene";
+import { BackgroundVideoLayer, withAlpha } from "./motion/MediaLayer";
 
 // Load Space Grotesk font for cinematic typography
 const { fontFamily } = loadSpaceGrotesk(["400", "700"]);
@@ -237,6 +243,16 @@ interface Cut {
   align?: "left" | "center" | "right";
   /** Words to highlight in the accent color on text_card scenes. */
   accentWords?: string[];
+  /**
+   * Compiled bespoke choreography (lib/motion_compiler.py). When present,
+   * `type` is "bespoke" and this scene is rendered by BespokeScene instead
+   * of a stock component — the body-scene half of code2motion. If the spec
+   * is malformed the renderer falls back to the component named by
+   * `fallbackType`, or to a text_card.
+   */
+  bespoke?: ChoreographySpec;
+  /** Component to use if `bespoke` is unusable (the ladder's last rung). */
+  fallbackType?: string;
 }
 
 interface Overlay {
@@ -540,79 +556,11 @@ const BackgroundImageLayer: React.FC<{
 //     long cuts cycle the clip instead of freezing,
 //   * `endAt` clamps playback to a known-good portion of the source,
 //   * `playbackRate` allows cinematic ambient slow-mo.
-const BackgroundVideoLayer: React.FC<{
-  src: string;
-  startFrom?: number;
-  /** Total source duration in seconds (enables gapless looping). */
-  clipDuration?: number;
-  endAt?: number;
-  loop?: boolean;
-  playbackRate?: number;
-  overlayOpacity?: number;
-  palette?: ScenePalette;
-  children: React.ReactNode;
-}> = ({
-  src,
-  startFrom = 0,
-  clipDuration,
-  endAt,
-  loop = true,
-  playbackRate,
-  overlayOpacity = 0.5,
-  palette,
-  children,
-}) => {
-  const { fps } = useVideoConfig();
-
-  const scrim = palette
-    ? withAlpha(palette.bgBase, overlayOpacity)
-    : `rgba(15, 23, 42, ${overlayOpacity})`;
-
-  // Loop window = footage remaining after the trim start. Requires the
-  // source duration (passed by the builder). Without it we render plain —
-  // legacy props keep their old behavior.
-  const clipEnd = endAt ?? clipDuration;
-  const windowSeconds =
-    loop && clipEnd !== undefined && clipEnd - startFrom > 0.05
-      ? clipEnd - startFrom
-      : undefined;
-  const loopFrames = windowSeconds
-    ? Math.max(2, Math.round(windowSeconds * fps))
-    : undefined;
-
-  const video = (
-    <OffthreadVideo
-      src={resolveAsset(src)}
-      trimBefore={Math.round(startFrom * fps)}
-      trimAfter={clipEnd !== undefined ? Math.round(clipEnd * fps) : undefined}
-      playbackRate={playbackRate}
-      style={{
-        width: "100%",
-        height: "100%",
-        objectFit: "cover",
-      }}
-      muted
-    />
-  );
-
-  return (
-    <AbsoluteFill style={{ overflow: "hidden" }}>
-      {/* Background video — loops over the remaining window so long cuts
-          never freeze on a frame (the v2 "laggy" bug) */}
-      {loopFrames ? <Loop durationInFrames={loopFrames}>{video}</Loop> : video}
-      {/* Palette-tinted scrim for readability */}
-      <AbsoluteFill style={{ background: scrim }} />
-      {/* Component content on top */}
-      {children}
-    </AbsoluteFill>
-  );
-};
-
-/** hex → rgba() string (used for palette scrims). */
-function withAlpha(hex: string, alpha: number): string {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
+//
+// That rule now lives in ./motion/MediaLayer (BackgroundVideoLayer) so the
+// compiled-scene renderer shares the exact same implementation instead of
+// re-deriving it — the re-derivation is what produced a hard
+// "Compositor error: No frame found at position" on long bespoke scenes.
 
 const SceneRenderer: React.FC<{
   cut: Cut;
@@ -622,6 +570,14 @@ const SceneRenderer: React.FC<{
 }> = ({ cut, theme, palette, durationInFrames }) => {
   // Wrap component with background video or image if specified
   const maybeWrapWithBg = (element: React.ReactElement) => {
+    // A compiled scene OWNS its footage (spec.media) and renders it inside
+    // BespokeScene. Wrapping it here too would point a second reader at the
+    // same file at a different trim, which the compositor rejects outright
+    // ("No frame found at position"). Defensive: the props builder already
+    // strips these keys, but hand-edited and older props must not break.
+    if (cut.type === "bespoke" && cut.bespoke) {
+      return element;
+    }
     if (cut.backgroundVideo) {
       return (
         <BackgroundVideoLayer
@@ -633,6 +589,7 @@ const SceneRenderer: React.FC<{
           playbackRate={cut.backgroundVideoRate}
           overlayOpacity={cut.backgroundOverlay ?? 0.5}
           palette={palette}
+          sceneFrames={durationInFrames}
         >
           {element}
         </BackgroundVideoLayer>
@@ -659,6 +616,35 @@ const SceneRenderer: React.FC<{
   const bgColor = (rawBg === theme.backgroundColor || rawBg === "#0F172A" || rawBg === "#0f172a") ? "transparent" : rawBg;
   const textColor = cut.color || palette.text;
   const accent = cut.accentColor || palette.accent;
+
+  // --- Bespoke compiled choreography (code2motion, body scenes) ----------
+  // Highest priority: when a compiled spec is present and valid, it IS the
+  // scene. Invalid specs fall down the ladder to `fallbackType` and finally
+  // to a plain text card, so a bad spec can never produce a broken frame.
+  if (cut.type === "bespoke" && cut.bespoke) {
+    const problem = validateSpec(cut.bespoke);
+    if (!problem) {
+      return (
+        <BespokeScene
+          spec={cut.bespoke}
+          fonts={{ heading: theme.headingFont, body: theme.bodyFont }}
+        />
+      );
+    }
+    if (typeof console !== "undefined") {
+      console.warn(`[bespoke] ${cut.id}: ${problem} — falling back to template`);
+    }
+    if (cut.fallbackType) {
+      return (
+        <SceneRenderer
+          cut={{ ...cut, type: cut.fallbackType }}
+          theme={theme}
+          palette={palette}
+          durationInFrames={durationInFrames}
+        />
+      );
+    }
+  }
 
   // Explicit component types — use palette-derived defaults for colors
   if (cut.type === "text_card" && cut.text) {
@@ -992,10 +978,14 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
         const transition: TransitionStyle =
           cut.transition ?? transitionForCut(i, cut.id, projectSeed);
         const hasBroll = Boolean(cut.backgroundVideo || cut.backgroundImage);
+        // A bespoke scene owns its own camera path (compiled per scene), so
+        // stacking CameraDrift on top would fight it — two cameras on one
+        // frame reads as seasickness, not style.
+        const bespokeActive = cut.type === "bespoke" && Boolean(cut.bespoke);
 
         return (
           <Sequence key={cut.id} from={from} durationInFrames={duration}>
-            <CameraDrift durationInFrames={duration} seed={seed}>
+            <CameraDrift durationInFrames={duration} seed={seed} enabled={!bespokeActive}>
               {!hasBroll && (
                 <SceneBackground
                   style={bgStyle}
