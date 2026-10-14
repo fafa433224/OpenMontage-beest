@@ -3,3 +3,6 @@
 torch>=2.0
 torchaudio>=2.0
 torchvision>=0.15
+# Vector DB for the Open-Sora-Dataset local corpus (CLIP ANN search).
+# Optional but recommended on Kaggle/GPU boxes; see tools/video/open_sora_index.py.
+lancedb>=0.15

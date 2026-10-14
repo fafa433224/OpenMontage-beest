@@ -843,6 +843,80 @@ class HyperFramesCompose(BaseTool):
             "stdout_tail": (proc.stdout or "")[-4000:],
             "stderr_tail": (proc.stderr or "")[-4000:],
         }
+
+        # v2.1 guard (ported from the Kaggle production path, commit 81bafe1):
+        # the CLI has been observed to hang in teardown AFTER writing a
+        # complete MP4 — under `timeout` that surfaces as exit 124 with a
+        # perfectly good file on disk. So judge success by the OUTPUT FILE's
+        # real duration (ffprobe) FIRST; the exit code only matters when the
+        # file is missing or its length can't be verified. When the caller
+        # declares an expected duration we accept ±0.35 s. A duration we
+        # cannot read at all falls back to the exit-code contract (mocked
+        # environments produce non-media outputs — those must keep passing).
+        probe = self._probe_file_duration(output_path) if output_path.exists() else None
+        steps["render"]["output_duration_s"] = probe
+        expected = inputs.get("expected_duration_s")
+
+        if probe is not None:
+            duration_ok = expected is None or abs(probe - float(expected)) <= 0.35
+            if duration_ok:
+                if proc.returncode != 0:
+                    steps["render"]["recovered_from_exit_code"] = proc.returncode
+                    log.warning(
+                        "hyperframes render exited %s but output duration %.2fs "
+                        "matches expectation — accepting the file (known CLI "
+                        "teardown-hang behaviour)",
+                        proc.returncode, probe,
+                    )
+                return ToolResult(
+                    success=True,
+                    data={
+                        "operation": "render",
+                        "output": str(output_path),
+                        "workspace": str(workspace),
+                        "width": width,
+                        "height": height,
+                        "fps": fps,
+                        "quality": quality,
+                        "output_duration_s": probe,
+                        "steps": steps,
+                    },
+                    artifacts=[str(output_path)],
+                )
+            if expected is not None:
+                return ToolResult(
+                    success=False,
+                    error=(
+                        f"hyperframes render duration mismatch: got {probe:.2f}s, "
+                        f"expected ~{float(expected):.2f}s."
+                    ),
+                    data={"steps": steps},
+                )
+            # Readable duration, no expectation declared, exit != 0: the
+            # caller did not pin a duration, so a nonzero exit still fails.
+            if proc.returncode != 0:
+                return ToolResult(
+                    success=False,
+                    error=f"hyperframes render exit {proc.returncode}",
+                    data={"steps": steps},
+                )
+            return ToolResult(
+                success=True,
+                data={
+                    "operation": "render",
+                    "output": str(output_path),
+                    "workspace": str(workspace),
+                    "width": width,
+                    "height": height,
+                    "fps": fps,
+                    "quality": quality,
+                    "output_duration_s": probe,
+                    "steps": steps,
+                },
+                artifacts=[str(output_path)],
+            )
+
+        # Duration unreadable (or file missing): classic exit-code contract.
         if proc.returncode != 0:
             return ToolResult(
                 success=False,
@@ -860,6 +934,11 @@ class HyperFramesCompose(BaseTool):
                 data={"steps": steps},
             )
 
+        log.warning(
+            "hyperframes render output %s has no readable duration (ffprobe "
+            "failed) — trusting the exit code",
+            output_path,
+        )
         return ToolResult(
             success=True,
             data={
@@ -874,6 +953,21 @@ class HyperFramesCompose(BaseTool):
             },
             artifacts=[str(output_path)],
         )
+
+    def _probe_file_duration(self, path: Path) -> Optional[float]:
+        """ffprobe the duration of a rendered file; None when unreadable."""
+        try:
+            proc = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "csv=p=0", str(path),
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+            return float(proc.stdout.strip())
+        except Exception:
+            return None
 
     def _render_existing(self, inputs: dict[str, Any]) -> ToolResult:
         """Validate and render a hand-authored workspace without scaffolding it.

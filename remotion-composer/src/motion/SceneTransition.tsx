@@ -37,25 +37,55 @@ export function transitionForIndex(i: number): TransitionStyle {
   return TRANSITION_STYLES[((i % TRANSITION_STYLES.length) + TRANSITION_STYLES.length) % TRANSITION_STYLES.length];
 }
 
-// Frames used for enter/exit choreography. 0.36s at 30fps — snappy but visible.
+// ---------------------------------------------------------------------------
+// Seeded selection (v2.1). `transitionForIndex` was pure index-modulo, so
+// every video with the same cut count got the IDENTICAL transition
+// sequence — the literal "same look every time" complaint. Python's creative
+// director now pre-assigns `cut.transition` per project from a seeded
+// shuffle; this fallback only serves legacy props without those fields, and
+// at least varies by project id when one is provided.
+// ---------------------------------------------------------------------------
+export function transitionForCut(
+  i: number,
+  cutId: string,
+  projectSeed = 0,
+): TransitionStyle {
+  // FNV-1a over cutId+seed → stable per cut, different per project.
+  let h = 2166136261 ^ projectSeed;
+  const key = `${cutId}:${i}:${projectSeed}`;
+  for (let c = 0; c < key.length; c++) {
+    h ^= key.charCodeAt(c);
+    h = Math.imul(h, 16777619);
+  }
+  return TRANSITION_STYLES[h % TRANSITION_STYLES.length];
+}
+
+// Frames used for enter/exit choreography. v2.1: timing variants — the
+// Python director passes `transitionSpeed` (0.7 fast / 1 standard / 1.4
+// cinematic) so pacing differs per project, not just the style name.
 const T_IN = 11;
 const T_OUT = 9;
 
 interface SceneTransitionProps {
   style: TransitionStyle;
   durationInFrames: number;
+  /** Timing multiplier: <1 snappier, >1 more cinematic (default 1). */
+  speed?: number;
   children: React.ReactNode;
 }
 
 export const SceneTransition: React.FC<SceneTransitionProps> = ({
   style,
   durationInFrames,
+  speed = 1,
   children,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const outStart = Math.max(T_IN, durationInFrames - T_OUT);
+  const tIn = Math.max(4, Math.round(T_IN * speed));
+  const tOut = Math.max(3, Math.round(T_OUT * speed));
+  const outStart = Math.max(tIn, durationInFrames - tOut);
 
   // Entrance: springy 0→1 (with overshoot where the style calls for it)
   const enter = spring({ frame, fps, config: { damping: 16, stiffness: 110, mass: 0.9 } });
@@ -91,11 +121,11 @@ export const SceneTransition: React.FC<SceneTransitionProps> = ({
       break;
     }
     case "wipe": {
-      // Cheap inset mask: reveal left→right on enter, consume left→right on exit.
+      // Cheap inset mask: reveal left→right on enter. v2.1 removed the dead
+      // `Math.min(consume * 0.0, 0)` expression (always 0 — abandoned code).
+      // Exit fades + slides the mask origin, matching the documented intent.
       const reveal = Math.min(enter * 1.15, 1) * 100;
-      const consume = (1 - exit) * 100;
-      clipPath = `inset(0 ${Math.max(0, 100 - reveal)}% 0 ${Math.min(consume, 100) > 0 && exit < 1 ? Math.min(consume * 0.0, 0) : 0}%)`;
-      // Exit: slide the mask origin instead — simplest correct: fade+slide on exit
+      clipPath = `inset(0 ${Math.max(0, 100 - reveal)}% 0 0%)`;
       transform = `translateX(${(1 - exit) * -60}px)`;
       extraOpacity = exit;
       break;

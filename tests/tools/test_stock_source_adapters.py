@@ -183,9 +183,17 @@ def _adapter_names():
     return [source.name for source in all_sources()]
 
 
+# Sources with no network transport at all (local corpus retrieval). The
+# transport-error contract is vacuous for them: there is no `requests.get`
+# to fail, and search() legally returns [] when the local index is absent.
+_TRANSPORTLESS_SOURCES = {"open_sora_dataset"}
+
+
 def _transport_error_params():
     params = []
     for name in _adapter_names():
+        if name in _TRANSPORTLESS_SOURCES:
+            continue
         reason = _STILL_SWALLOWS_TRANSPORT_ERRORS.get(name)
         marks = [pytest.mark.xfail(strict=True, reason=reason)] if reason else []
         params.append(pytest.param(name, marks=marks, id=name))

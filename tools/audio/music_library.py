@@ -84,7 +84,7 @@ class MusicLibrary(BaseTool):
     ]
     not_good_for = [
         "generating new music (use music_gen / suno_music)",
-        "searching an external catalog (use freesound_music / pixabay_music)",
+        "searching an external catalog (use freesound_music / music_gen)",
     ]
 
     input_schema = {

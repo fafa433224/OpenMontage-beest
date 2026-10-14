@@ -2,6 +2,7 @@ import {
   AbsoluteFill,
   Audio,
   Img,
+  Loop,
   OffthreadVideo,
   Sequence,
   interpolate,
@@ -19,7 +20,7 @@ import { LineChart } from "./components/charts/LineChart";
 import { PieChart } from "./components/charts/PieChart";
 import { KPIGrid } from "./components/charts/KPIGrid";
 import { ProgressBar } from "./components/ProgressBar";
-import { CaptionOverlay, WordCaption } from "./components/CaptionOverlay";
+import { CaptionOverlay, WordCaption, type CaptionStyleConfig } from "./components/CaptionOverlay";
 import { SectionTitle } from "./components/SectionTitle";
 import { StatReveal } from "./components/StatReveal";
 import { HeroTitle } from "./components/HeroTitle";
@@ -36,6 +37,8 @@ import { resolveTheme, type ThemeConfig, DEFAULT_THEME } from "./Root";
 import {
   paletteForSection,
   paletteByIndex,
+  effectivePalettes,
+  paletteForSectionIn,
   hashString,
   type ScenePalette,
 } from "./motion/palettes";
@@ -49,6 +52,7 @@ import {
   CameraDrift,
   TransitionSweep,
   transitionForIndex,
+  transitionForCut,
   type TransitionStyle,
 } from "./motion/SceneTransition";
 
@@ -180,6 +184,10 @@ interface Cut {
   backgroundImage?: string; // AI-generated or stock image rendered behind the component
   backgroundVideo?: string; // Video clip rendered behind the component (takes priority over backgroundImage)
   backgroundVideoStart?: number; // Seek position in seconds for background video (default 0)
+  backgroundVideoDuration?: number; // Source clip length in seconds — enables gapless looping (lag fix)
+  backgroundVideoEnd?: number; // Clamp playback to this source position in seconds (optional)
+  backgroundVideoLoop?: boolean; // Loop the clip when the cut outlasts it (default true — lag fix)
+  backgroundVideoRate?: number; // Playback rate for ambient slow-mo (optional)
   backgroundOverlay?: number; // Opacity of dark overlay on backgroundImage/backgroundVideo (0-1, default 0.55)
   color?: string;
   accentColor?: string;
@@ -269,6 +277,8 @@ interface SfxTrack {
   src: string;
   atSeconds: number;
   volume?: number;
+  /** How long the cue window stays open (default 4s; long risers need more). */
+  durationSeconds?: number;
 }
 
 export interface ExplainerProps {
@@ -279,6 +289,15 @@ export interface ExplainerProps {
   audio?: AudioConfig;
   /** Sound-effect cues (whooshes on cuts, impacts on heroes, chimes...). */
   sfx?: SfxTrack[];
+  /** Caption style pack from the creative director (look/pacing/position). */
+  captionStyle?: CaptionStyleConfig;
+  /** Project-specific palettes derived from theme colors (replaces the
+   *  fixed six-palette ring when present — see lib/creative_director.py). */
+  customPalettes?: unknown;
+  /** Per-project seed for transition/palette fallback selection. */
+  creativeSeed?: number;
+  /** Transition timing multiplier: 0.7 snappy / 1 standard / 1.4 cinematic. */
+  transitionSpeed?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,34 +518,78 @@ const BackgroundImageLayer: React.FC<{
   );
 };
 
-// Background video layer — plays a looping stock clip behind component
-// content with a palette-tinted scrim.
+// Background video layer — plays a stock clip behind component content with
+// a palette-tinted scrim.
+//
+// v2.1 LAG FIX: this layer used to pass only `startFrom`, so when a cut ran
+// longer than the remaining footage (8s synth clips started up to 5s in,
+// text cards running 20s+) OffthreadVideo froze on the last frame — the
+// background visibly "stuck" mid-scene, which read as a laggy render. Fix:
+//   * the builder passes `backgroundVideoDuration` (it knows/probes it),
+//   * we wrap the video in Remotion's <Loop> over the remaining window so
+//     long cuts cycle the clip instead of freezing,
+//   * `endAt` clamps playback to a known-good portion of the source,
+//   * `playbackRate` allows cinematic ambient slow-mo.
 const BackgroundVideoLayer: React.FC<{
   src: string;
   startFrom?: number;
+  /** Total source duration in seconds (enables gapless looping). */
+  clipDuration?: number;
+  endAt?: number;
+  loop?: boolean;
+  playbackRate?: number;
   overlayOpacity?: number;
   palette?: ScenePalette;
   children: React.ReactNode;
-}> = ({ src, startFrom = 0, overlayOpacity = 0.5, palette, children }) => {
+}> = ({
+  src,
+  startFrom = 0,
+  clipDuration,
+  endAt,
+  loop = true,
+  playbackRate,
+  overlayOpacity = 0.5,
+  palette,
+  children,
+}) => {
   const { fps } = useVideoConfig();
 
   const scrim = palette
     ? withAlpha(palette.bgBase, overlayOpacity)
     : `rgba(15, 23, 42, ${overlayOpacity})`;
 
+  // Loop window = footage remaining after the trim start. Requires the
+  // source duration (passed by the builder). Without it we render plain —
+  // legacy props keep their old behavior.
+  const clipEnd = endAt ?? clipDuration;
+  const windowSeconds =
+    loop && clipEnd !== undefined && clipEnd - startFrom > 0.05
+      ? clipEnd - startFrom
+      : undefined;
+  const loopFrames = windowSeconds
+    ? Math.max(2, Math.round(windowSeconds * fps))
+    : undefined;
+
+  const video = (
+    <OffthreadVideo
+      src={resolveAsset(src)}
+      trimBefore={Math.round(startFrom * fps)}
+      trimAfter={clipEnd !== undefined ? Math.round(clipEnd * fps) : undefined}
+      playbackRate={playbackRate}
+      style={{
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+      }}
+      muted
+    />
+  );
+
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
-      {/* Background video */}
-      <OffthreadVideo
-        src={resolveAsset(src)}
-        startFrom={Math.round(startFrom * fps)}
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-        }}
-        muted
-      />
+      {/* Background video — loops over the remaining window so long cuts
+          never freeze on a frame (the v2 "laggy" bug) */}
+      {loopFrames ? <Loop durationInFrames={loopFrames}>{video}</Loop> : video}
       {/* Palette-tinted scrim for readability */}
       <AbsoluteFill style={{ background: scrim }} />
       {/* Component content on top */}
@@ -554,6 +617,10 @@ const SceneRenderer: React.FC<{
         <BackgroundVideoLayer
           src={cut.backgroundVideo}
           startFrom={cut.backgroundVideoStart ?? 0}
+          clipDuration={cut.backgroundVideoDuration}
+          endAt={cut.backgroundVideoEnd}
+          loop={cut.backgroundVideoLoop ?? true}
+          playbackRate={cut.backgroundVideoRate}
           overlayOpacity={cut.backgroundOverlay ?? 0.5}
           palette={palette}
         >
@@ -861,6 +928,12 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
       ? (props.sectionCount as number)
       : Math.max(1, ...cuts.map((c) => (c.sectionIndex ?? 0) + 1));
 
+  // v2.1: the effective palette ring — custom palettes from the creative
+  // director (derived from this project's colors/seed) when provided, else
+  // the curated built-ins. Same props file → same ring; different projects
+  // → different rings.
+  const paletteRing = effectivePalettes(props.customPalettes);
+
   return (
     <AbsoluteFill style={{ background: theme.backgroundColor, fontFamily: theme.headingFont || fontFamily }}>
       {/* Layer 0: Neutral animated base — visible during scene crossfades */}
@@ -872,16 +945,22 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
         const from = Math.round(cut.in_seconds * fps);
         const duration = Math.max(1, Math.round((cut.out_seconds - cut.in_seconds) * fps));
         const seed = hashString(cut.id);
+        const projectSeed =
+          typeof props.creativeSeed === "number" ? (props.creativeSeed as number) : 0;
+        const transitionSpeed =
+          typeof props.transitionSpeed === "number" ? (props.transitionSpeed as number) : 1;
 
-        // Creative direction: explicit props win, deterministic rotation fills
-        // the gaps so even OLD props files render with full motion variety.
+        // Creative direction: explicit props win, seeded fallbacks fill the
+        // gaps so even OLD props files render with full motion variety —
+        // and different projects no longer share one modulo sequence.
         const sectionIndex = cut.sectionIndex ?? 0;
         const palette =
           cut.paletteIndex !== undefined
             ? paletteByIndex(cut.paletteIndex)
-            : paletteForSection(sectionIndex, sectionCount, i);
+            : paletteForSectionIn(paletteRing, sectionIndex, sectionCount, i);
         const bgStyle: BgStyle = cut.bgStyle ?? bgStyleForIndex(i + sectionIndex);
-        const transition: TransitionStyle = cut.transition ?? transitionForIndex(i);
+        const transition: TransitionStyle =
+          cut.transition ?? transitionForCut(i, cut.id, projectSeed);
         const hasBroll = Boolean(cut.backgroundVideo || cut.backgroundImage);
 
         return (
@@ -895,7 +974,7 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
                   durationInFrames={duration}
                 />
               )}
-              <SceneTransition style={transition} durationInFrames={duration}>
+              <SceneTransition style={transition} durationInFrames={duration} speed={transitionSpeed}>
                 <SceneRenderer
                   cut={cut}
                   theme={theme}
@@ -923,15 +1002,14 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
         );
       })}
 
-      {/* Layer 3: Captions (word-by-word highlight) */}
+      {/* Layer 3: Captions (word-by-word highlight, style-pack driven) */}
       {captions && captions.length > 0 && (
         <CaptionOverlay
           words={captions}
-          wordsPerPage={6}
-          fontSize={42}
           color={theme.textColor}
           highlightColor={theme.captionHighlightColor}
           backgroundColor={theme.captionBackgroundColor}
+          captionStyle={props.captionStyle as CaptionStyleConfig | undefined}
         />
       )}
 
@@ -940,12 +1018,14 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
         <Audio src={resolveAsset(audio.narration.src)} volume={audio.narration.volume ?? 1} />
       )}
 
-      {/* Layer 4: Audio — sound-effect cues (whooshes, impacts, chimes) */}
+      {/* Layer 4: Audio — sound-effect cues (whooshes, impacts, chimes).
+          v2.1: window length comes from the cue sheet (long risers were
+          truncated by the old hardcoded 4s), default stays 4s. */}
       {sfx?.map((cue, i) => (
         <Sequence
           key={`sfx-${i}`}
           from={Math.max(0, Math.round(cue.atSeconds * fps))}
-          durationInFrames={Math.round(4 * fps)}
+          durationInFrames={Math.round((cue.durationSeconds ?? 4) * fps)}
         >
           <Audio src={resolveAsset(cue.src)} volume={cue.volume ?? 0.6} />
         </Sequence>

@@ -7,7 +7,7 @@ FireRed origin (Apache-2.0):
     ``replace_with_closest_if_within_threshold``.
 
 In OpenMontage this splits into two operations because the agent, not this
-tool, chooses the track (see the ``music_library`` / ``pixabay_music`` /
+tool, chooses the track (see the ``music_library`` / ``freesound_music`` /
 ``suno_music`` tools):
   - analyze: BPM, accent beats, energy of one chosen BGM file (needs librosa)
   - snap:    move timeline cut boundaries onto the nearest accent beat

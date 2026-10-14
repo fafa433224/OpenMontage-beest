@@ -95,7 +95,7 @@ def test_theme_text_color_is_threaded_into_overlay_components(component: str) ->
         ("components/HeroTitle.tsx", "color: i < 8 ? accentColor : textColor,"),
         ("components/HeroTitle.tsx", "color: subtitleColor,"),
         ("components/HeroTitle.tsx", "backgroundColor: accentColor,"),
-        ("components/HeroTitle.tsx", "background: scrimBackground,"),
+        ("components/HeroTitle.tsx", "background: scrim,"),
     ],
 )
 def test_components_render_from_props_not_literals(component: str, expected: str) -> None:

@@ -128,6 +128,71 @@ export function paletteByIndex(index: number): ScenePalette {
   return SECTION_PALETTES[((index % SECTION_PALETTES.length) + SECTION_PALETTES.length) % SECTION_PALETTES.length];
 }
 
+// ---------------------------------------------------------------------------
+// v2.1 — custom palettes. The fixed six-palette ring meant every multi-
+// section video walked indigo→teal→amber→emerald→magenta→steel in the same
+// order, regardless of the project's brand colors or mood. The Python
+// creative director now DERIVES palettes (lib/creative_director.py builds
+// them from the project's primary/accent colors and a per-project seed) and
+// passes them through Explainer props as `customPalettes`. When present they
+// fully replace the built-in ring; when absent the curated six remain —
+// every existing props file renders exactly as before.
+// ---------------------------------------------------------------------------
+
+/** Validate a palette coming from JSON props — one bad field must not
+ *  blank the whole render, so we fill anything missing from a curated base. */
+export function normalizeCustomPalette(
+  raw: unknown,
+  fallbackIndex = 0,
+): ScenePalette {
+  const base = SECTION_PALETTES[fallbackIndex % SECTION_PALETTES.length];
+  if (typeof raw !== "object" || raw === null) return base;
+  const r = raw as Partial<ScenePalette>;
+  const str = (v: unknown, d: string) => (typeof v === "string" && v.length > 0 ? v : d);
+  return {
+    name: str(r.name, `custom-${fallbackIndex}`),
+    bgBase: str(r.bgBase, base.bgBase),
+    bgAlt: str(r.bgAlt, base.bgAlt),
+    glowA: str(r.glowA, base.glowA),
+    glowB: str(r.glowB, base.glowB),
+    accent: str(r.accent, base.accent),
+    text: str(r.text, base.text),
+    muted: str(r.muted, base.muted),
+    glass: str(r.glass, base.glass),
+    glassEdge: str(r.glassEdge, base.glassEdge),
+  };
+}
+
+/** Build the effective palette ring for a render: custom palettes when
+ *  provided (normalized + de-duplicated), else the curated built-ins. */
+export function effectivePalettes(custom?: unknown): ScenePalette[] {
+  if (!Array.isArray(custom) || custom.length === 0) return SECTION_PALETTES;
+  const seen = new Set<string>();
+  const out: ScenePalette[] = [];
+  custom.forEach((raw, i) => {
+    const p = normalizeCustomPalette(raw, i);
+    if (!seen.has(p.name)) {
+      seen.add(p.name);
+      out.push(p);
+    }
+  });
+  return out.length > 0 ? out : SECTION_PALETTES;
+}
+
+/** paletteForSection over an explicit ring (custom or built-in). */
+export function paletteForSectionIn(
+  ring: ScenePalette[],
+  sectionIndex: number,
+  sectionCount: number,
+  offset = 0,
+): ScenePalette {
+  const n = ring.length;
+  if (n === 0) return SECTION_PALETTES[0];
+  if (sectionCount <= 1) return ring[offset % n];
+  const step = Math.max(1, Math.floor(n / Math.min(sectionCount, n)));
+  return ring[(offset + sectionIndex * step) % n];
+}
+
 // Deterministic PRNG (mulberry32) — backgrounds must render identically on
 // every machine and every retry, so no Math.random() anywhere in motion code.
 export function seededRandom(seed: number): () => number {
