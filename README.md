@@ -445,6 +445,85 @@ Edit your own talking-head footage. Generate a fully animated explainer from scr
 
 ---
 
+## Runtime Creative Engine (v3) — Any LLM, Any Video, No More "Same Look"
+
+OpenMontage started **agent-first**: the IDE coding assistant was the LLM, and
+that works when a human drives it. But headless runs (Kaggle notebooks, CI,
+cron) had **no intelligence at all**, and every creative dimension that wasn't
+agent-driven was deterministic index-modulo rotation — the exact reason every
+video came out looking the same: same caption pill, same transition sequence,
+same six-palette ring, same "robotic" feel. v3 fixes the architecture:
+
+### 1. Universal runtime LLM — connect ANY model in one env var
+
+`lib/llm_client.py` is a stdlib-only client (no `pip install openai` needed)
+that speaks to **14 provider presets** plus any custom OpenAI-compatible
+endpoint:
+
+| Preset | Env var | Notes |
+|---|---|---|
+| OpenAI | `OPENAI_API_KEY` | gpt-4o family |
+| Anthropic | `ANTHROPIC_API_KEY` | native messages API |
+| Gemini | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | OpenAI-compatible bridge |
+| Groq | `GROQ_API_KEY` | llama-3.3-70b default |
+| DeepSeek | `DEEPSEEK_API_KEY` | deepseek-chat |
+| OpenRouter | `OPENROUTER_API_KEY` | every hosted model at once |
+| Mistral / Together / Fireworks / xAI / Moonshot / Zhipu | `<PROVIDER>_API_KEY` | — |
+| Ollama / vLLM | `LLM_PROVIDER=ollama` + `OLLAMA_BASE_URL` | local models, no key |
+| **Any endpoint** | `LLM_BASE_URL` + `LLM_API_KEY` + `LLM_MODEL` | LiteLLM, llama.cpp, GitHub Models, ... |
+
+That is every hosted model reachable through those gateways **plus** every
+local model — all driving script writing (`chat_json`), creative direction
+(`creative_brief`), and any other text stage. Registered as the
+`llm_generate` tool, so the agent can call it too.
+
+### 2. Seeded creative director — variety without an LLM, determinism with one
+
+`lib/creative_director.py` guarantees that two different projects never look
+the same, while the same project retries identically:
+
+- **6 caption style packs** (pill / boxed / outline / karaoke-bar / pop-scale
+  / lower-third) with position + animation variants — replacing the one
+  hardcoded pill;
+- **10 palette families** generated with HSL math from the project's mood
+  and brand colors — replacing the fixed six-palette ring;
+- **typed transition pools** with seeded, no-immediate-repeat sampling —
+  replacing `TRANSITION_STYLES[i % 8]`;
+- **universal content signals**: numeric-regex stat detection (any language
+  using Arabic numerals), comparison/KPI synthesis from actual content;
+- an optional **LLM creative brief** (mood, palette family, caption look,
+  pacing, b-roll mood words) that shifts choices — the seeded director keeps
+  the output valid and varied even when the LLM is down.
+
+### 3. Open-Sora-Dataset corpus — stock footage without scraping
+
+Web scraping for stock footage is gone (the mixkit/ESA/NOAA/JAXA/Dareful
+scrapers were removed). In its place: the local
+[PKU-YuanGroup/Open-Sora-Dataset](https://github.com/PKU-YuanGroup/Open-Sora-Dataset)
+corpus (~40k CC0 clips) indexed with **LanceDB + CLIP**:
+
+```
+export OPEN_SORA_DIR=/kaggle/temp/open-sora-dataset     # dataset root
+python tools/video/open_sora_index.py build              # CLIP-embed on GPU, resumable
+python tools/video/open_sora_index.py search "neon city rain at night" --k 8
+```
+
+`lib/corpus_lancedb.py` stores 512-d CLIP vectors (mid-frame visual channel
+fused with the LLaVA caption channel) and serves ANN search; the
+`open_sora_dataset` stock-source adapter plugs it into the existing corpus
+builder fan-out with priority 5 (above every remaining API source).
+
+### 4. Lag fix + dual-GPU production renderer
+
+- B-roll clips now carry their **true durations**, and `BackgroundVideoLayer`
+  wraps them in Remotion's `<Loop>` — long cuts cycle footage gaplessly
+  instead of freezing on the last frame (the "laggy" feel);
+- `scripts/kaggle/render_voiceover_video.py` runs **whisper on GPU 0 while
+  the Open-Sora CLIP collector owns GPU 1**, with per-stage timing
+  instrumentation and graceful fallbacks at every stage.
+
+---
+
 ## How It Works
 
 OpenMontage uses an **agent-first architecture**. There is no code orchestrator. Your AI coding assistant IS the orchestrator.
