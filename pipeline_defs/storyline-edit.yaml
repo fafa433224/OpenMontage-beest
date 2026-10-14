@@ -119,7 +119,7 @@ stages:
     tools_available:
       - tts_selector
       - music_library
-      - pixabay_music
+      - freesound_music
       - suno_music
       - bgm_beat_sync
       - ai_transition_plan

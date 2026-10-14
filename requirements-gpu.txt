@@ -16,3 +16,9 @@ av>=13.0,<14
 # 512-d) — used by the Open-Sora indexer and corpus ranking. Kaggle images
 # ship it, but declare it so bare GPU boxes get it too.
 transformers>=4.36
+
+# Diffusion pipelines used by local video/image generation paths
+# (ltx_video_local, wan engine, comfyui helpers). CPU-only installs
+# can skip these.
+diffusers>=0.27
+accelerate>=0.26

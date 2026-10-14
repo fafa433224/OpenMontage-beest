@@ -154,10 +154,7 @@ based on what footage lives where:
 | `pond5_pd` | Pond5 Public Domain — WWI/WWII, early cinema, historical speeches | Archival/vintage footage, Méliès, Edison, newsreels |
 | `videvo` | 90K+ free clips, nature, aerial, city, abstract, time-lapses | Large free library, complements Pexels with different contributors |
 | `nasa` | Earth-from-orbit, astronomy, flight, scale imagery | Reverent, anything about scale, space, planet, flight |
-| `esa` | European space missions, Hubble/Webb imagery, Earth observation | European space content, complements NASA for non-U.S. missions |
-| `jaxa` | Japanese space missions, Hayabusa, ISS Kibo module, H-IIA rockets | Asian space content, unique angle on space exploration |
-| `noaa` | Deep-sea ROV footage, marine life, coral reefs, weather, hurricanes | Ocean/underwater, unique deep-sea content, weather phenomena |
-| `dareful` | Boutique 4K nature — mountains, forests, waterfalls, time-lapses | High-quality nature B-roll, consistent visual style, aerial shots |
+| `open_sora_dataset` | Local PKU Open-Sora corpus (~40k CC0 clips) indexed with CLIP+LanceDB | Offline semantic search, zero-key real footage, reproducible runs |
 | `wikimedia` | Commons photos and CC video, civic/documentary/public-event coverage | Public spaces, landmarks, protests, city texture, educational footage |
 | `unsplash` | Polished editorial stills, lifestyle, product-adjacent photography | Modern still-image support shots when motion footage is thin |
 

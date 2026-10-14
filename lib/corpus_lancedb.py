@@ -36,6 +36,8 @@ Usage
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -44,6 +46,28 @@ from typing import Any, Optional
 import numpy as np
 
 EMBED_DIM = 512
+
+
+def _probe_duration_seconds(path: str) -> float:
+    """ffprobe duration for a local clip (0.0 when unknowable).
+
+    The Open-Sora manifest carries no duration field; without this probe
+    every indexed row stores duration=0.0 and search output prints "0.0s"
+    for every hit, forcing callers to re-probe.
+    """
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe or not path:
+        return 0.0
+    try:
+        result = subprocess.run(
+            [ffprobe, "-v", "quiet", "-print_format", "json", "-show_format", path],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return float(json.loads(result.stdout).get("format", {}).get("duration", 0.0))
+    except Exception:
+        return 0.0
 
 
 def lancedb_available() -> bool:
@@ -179,7 +203,11 @@ class OpenSoraStore:
                         clip_id=str(row.get("clip_id") or row.get("video_id") or Path(row["local_path"]).stem),
                         local_path=str(row.get("local_path", "")),
                         caption=str(row.get("caption") or row.get("text") or ""),
-                        duration=float(row.get("duration") or 0.0),
+                        duration=(
+                            float(row.get("duration") or 0.0)
+                            if float(row.get("duration") or 0.0) > 0
+                            else _probe_duration_seconds(str(row.get("local_path") or ""))
+                        ),
                         width=int(row.get("width") or 0),
                         height=int(row.get("height") or 0),
                         aesthetic_score=float(row.get("aesthetic_score") or 0.0),

@@ -33,7 +33,7 @@ class SceneDetect(BaseTool):
     execution_mode = ExecutionMode.SYNC
     determinism = Determinism.DETERMINISTIC
 
-    dependencies = ["cmd:ffmpeg"]
+    dependencies = ["cmd:ffmpeg", "python:scenedetect"]
     install_instructions = (
         "FFmpeg is required. For better detection install PySceneDetect:\n"
         "pip install scenedetect[opencv]"

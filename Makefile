@@ -85,7 +85,6 @@ install-dev: ensure-venv
 
 install-gpu: ensure-venv
 	$(PIP) install -r requirements-gpu.txt
-	$(PIP) install diffusers transformers accelerate
 
 # ---- Testing ----
 

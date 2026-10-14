@@ -124,11 +124,13 @@ def llm_brief_for(script):
 
 
 def collect_broll_parallel(script, brief, composer, out_dir, gpu_id, timeout_s=900):
-    """Spawn the Open-Sora collector on a specific GPU; returns (entries, note).
+    """Spawn the Open-Sora collector on a specific GPU; returns (proc, res_path).
 
     Runs concurrently with whisper transcription so both T4s stay busy.
-    Returns ([], reason) when Open-Sora is not set up — caller falls back
-    to the procedural synth pool."""
+    The caller must eventually ``communicate(timeout=timeout_s)`` the
+    returned process (see ``2c_harvest_broll``) — when Open-Sora is not set
+    up the collector writes an empty result and the caller falls back to
+    the procedural synth pool."""
     stage_dir = composer / "public" / "broll"
     queries = []
     moods = [str(m) for m in (brief or {}).get("broll_moods", [])][:3]
@@ -292,15 +294,22 @@ def main() -> int:
                     script, brief, composer, out_dir, gpu_clip)
 
         with stage("2_transcribe_gpu"):
-            if gpu_whisper is not None:
-                os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_whisper)
-            sys.path.insert(0, str(repo_dir))
-            from tools.analysis.transcriber import Transcriber
-            tr = Transcriber().execute({"input_path": str(input_dir / "voiceover.mp3"),
-                                        "model_size": "medium", "language": "en",
-                                        "output_dir": str(out_dir / "transcript")})
-            if not tr.success:
-                raise SystemExit(f"transcription failed: {tr.error}")
+            try:
+                if gpu_whisper is not None:
+                    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_whisper)
+                sys.path.insert(0, str(repo_dir))
+                from tools.analysis.transcriber import Transcriber
+                tr = Transcriber().execute({"input_path": str(input_dir / "voiceover.mp3"),
+                                            "model_size": "medium", "language": "en",
+                                            "output_dir": str(out_dir / "transcript")})
+                if not tr.success:
+                    raise SystemExit(f"transcription failed: {tr.error}")
+            except BaseException:
+                # Never orphan the GPU-1 collector if transcription dies —
+                # it would hold the second T4 until the Kaggle session ends.
+                if broll_proc is not None and broll_proc.poll() is None:
+                    broll_proc.kill()
+                raise
             words = tr.data["word_timestamps"]
             print("device", tr.data.get("device"), "compute", tr.data.get("compute_type"),
                   "words", len(words), "last word end", words[-1]["end"])
@@ -433,8 +442,10 @@ def main() -> int:
         print(json.dumps(qc, indent=1))
         frames = out_dir / "frames"
         frames.mkdir(exist_ok=True)
-        # General spread frames
-        for t in [5, vdur * 0.25, vdur * 0.5, vdur * 0.75, vdur - 5]:
+        # General spread frames (clamped to the actual duration — ffmpeg
+        # fails on negative -ss, which would kill an already-successful run)
+        for t in [t for t in (5, vdur * 0.25, vdur * 0.5, vdur * 0.75, vdur - 5)
+                  if 0 <= t < vdur]:
             sh(f"ffmpeg -loglevel error -y -ss {t:.2f} -i '{final}' -frames:v 1 -vf scale=960:-1 "
                f"'{frames}/t{int(t)}.png'")
         # Census frames: one at EVERY cut midpoint (charts at 70%), where the

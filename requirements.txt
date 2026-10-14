@@ -18,3 +18,6 @@ watchfiles>=0.21
 # Audio analysis - beat tracking for bgm_beat_sync (storyline-edit) and bmts_lite
 librosa>=0.10
 soundfile>=0.12
+
+# Signal processing - synth_audio SFX beds, scene_detect, video_understand
+scipy>=1.10

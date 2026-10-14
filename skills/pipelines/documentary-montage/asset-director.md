@@ -8,9 +8,9 @@ clips that fill each slot. There are two paths:
 ### Standard Path: Corpus + CLIP Retrieval
 
 1. **Build the corpus** — fan the scene director's queries out across
-   all available stock sources (Pexels, Pixabay Video, Coverr, Mixkit,
-   Archive.org, NARA, Library of Congress, Pond5 PD, Videvo, NASA, ESA,
-   JAXA, NOAA, Dareful, Wikimedia, Unsplash) and download/embed the candidates.
+   all available stock sources (Pexels, Pixabay Video, Coverr, Archive.org,
+   NARA, Library of Congress, Pond5 PD, Videvo, NASA, Open-Sora local corpus,
+   Wikimedia, Unsplash) and download/embed the candidates.
 2. **Pick per slot** — run CLIP retrieval against the corpus with each
    slot description and choose one winner per slot.
 
@@ -92,7 +92,7 @@ No other free source has comparable depth in this style.
 ### Acquisition Rules
 
 1. **Source lock.** Set `sources: ["pixabay_video"]` for ALL queries.
-   Do not mix real footage providers (Pexels, Dareful, etc.) with
+   Do not mix real footage providers (Pexels, Coverr, etc.) with
    fantasy clips — the style clash breaks immersion for children.
 
 2. **Query rewriting.** The scene director will have already rewritten
@@ -133,7 +133,7 @@ direct_clip_search.execute({
         {"query": "satellite dish night sky",        "slot_id": "slot_03"},
         # ... one per slot
     ],
-    "sources": ["pexels", "pixabay_video", "coverr", "mixkit", "archive_org"],  # or omit for all available
+    "sources": ["pexels", "pixabay_video", "coverr", "archive_org"],  # or omit for all available
     "clips_per_query": 3,
     "filters": {
         "min_duration": 3,

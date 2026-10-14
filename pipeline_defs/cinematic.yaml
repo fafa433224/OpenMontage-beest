@@ -177,7 +177,6 @@ stages:
       - atlas_3d
       - fal_3d
       - blender_world
-      - pixabay_music
       - freesound_music
       - music_gen
     tools_available:
@@ -190,7 +189,6 @@ stages:
       - atlas_3d
       - fal_3d
       - blender_world
-      - pixabay_music
       - freesound_music
       - music_gen
     checkpoint_required: true

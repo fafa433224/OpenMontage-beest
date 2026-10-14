@@ -46,7 +46,7 @@ class VideoUnderstand(BaseTool):
     determinism = Determinism.DETERMINISTIC
     runtime = ToolRuntime.LOCAL_GPU
 
-    dependencies = ["python:transformers", "python:torch"]
+    dependencies = ["python:transformers", "python:torch", "python:scipy"]
     install_instructions = (
         "pip install transformers torch  # For CLIP/BLIP-2 visual understanding"
     )

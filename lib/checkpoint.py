@@ -70,8 +70,19 @@ def get_pipeline_stages(pipeline_type: str | None) -> list[str]:
         from lib.pipeline_loader import load_pipeline_readonly, get_stage_order
         manifest = load_pipeline_readonly(pipeline_type)
         return get_stage_order(manifest)
-    except (FileNotFoundError, Exception):
-        # Graceful fallback: return all known stages in canonical order
+    except (FileNotFoundError, KeyError):
+        # Manifest for this pipeline type does not exist — canonical order.
+        return list(STAGES)
+    except Exception as exc:
+        # Malformed manifest or schema drift must not be silent: log loudly,
+        # keep the canonical order so the production can still proceed.
+        import logging
+        logging.getLogger(__name__).error(
+            "get_pipeline_stages failed to load manifest for %r: %s — "
+            "falling back to canonical stage order",
+            pipeline_type,
+            exc,
+        )
         return list(STAGES)
 
 CHECKPOINT_SCHEMA_PATH = (
