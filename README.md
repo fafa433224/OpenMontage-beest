@@ -522,6 +522,22 @@ builder fan-out with priority 5 (above every remaining API source).
   the Open-Sora CLIP collector owns GPU 1**, with per-stage timing
   instrumentation and graceful fallbacks at every stage.
 
+### Verified on real Kaggle T4 x2 hardware
+
+[`kaggle-notebooks/openmontage-full-run.ipynb`](kaggle-notebooks/openmontage-full-run.ipynb)
+runs the whole stack on a free GPU session — clone, deps, Node 22, Piper
+narration, Open-Sora slice + CLIP/LanceDB index, dual-GPU render, QC — with
+**hard tripwires instead of smoke tests**: the index build fails if it embeds
+zero rows, a live semantic-search proof runs before rendering, and the final
+cell asserts `broll_source == "open_sora"` when staging succeeded (a silent
+synth fallback fails the run).
+
+| run | result | wall | b-roll | notes |
+|-----|--------|------|--------|-------|
+| v2  | ✅ video OK, ❌ real-footage path dead | 595 s | synth fallback | exposed a silent `ImportError`: 0/64 rows indexed, run still green — led to the adapter fix + tripwires |
+| v3  | ✅ full pass | 331 s | **8 real Open-Sora clips** | 64/64 rows, 100 % word coverage, 24/24 unique frames, zero dead air, VLM frame QC 8–10/10 |
+| v4  | ✅ full pass | 347 s | **8 real Open-Sora clips** | reproducibility re-run on a fresh instance: 64/64 rows, 100 % word coverage, 24/24 unique frames, zero dead air, VLM frame QC 9/9/9 |
+
 ---
 
 ## How It Works
