@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/07/schema#",
+  "$id": "openmontage/brand/channel.schema.json",
+  "title": "Channel brand profile",
+  "description": "Per-channel brand envelope: anchors fixed per channel, drift seeded per project.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 60},
+        "tagline": {"type": "string", "maxLength": 120},
+        "url": {"type": "string", "maxLength": 200},
+        "logo": {"type": "string", "maxLength": 200, "description": "Path under remotion-composer public dir"}
+      },
+      "required": ["name"]
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primary": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+        "accent": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+        "fg": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+        "bg": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+        "family": {
+          "enum": ["", "indigo", "teal", "amber", "emerald", "magenta", "steel", "crimson", "violet", "sunset", "ocean"]
+        },
+        "hue_jitter_deg": {"type": "number", "minimum": 0, "maximum": 30}
+      }
+    },
+    "typography": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pairing": {"enum": ["modern-sans", "editorial-serif", "mono-tech", "display-bold"]}
+      }
+    },
+    "caption": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "style": {"enum": ["pill", "boxed", "outline", "karaoke-bar", "pop-scale", "lower-third"]},
+        "animation_variants": {
+          "type": "array",
+          "items": {"enum": ["spring", "slide", "fade", "pop"]},
+          "minItems": 1,
+          "maxItems": 4
+        }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transition_pool": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "enum": ["slide-left", "slide-right", "slide-up", "zoom-punch", "wipe", "flip", "glitch", "rise"]
+          }
+        },
+        "bg_pool": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"enum": ["aurora", "mesh", "beams", "particles", "grid-pulse", "orbits", "waves", "grain"]}
+        },
+        "hero_bg_pool": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"enum": ["aurora", "mesh", "beams"]}
+        },
+        "pacing": {"enum": ["calm", "standard", "energetic"]},
+        "pacing_jitter": {"type": "number", "minimum": 0, "maximum": 1},
+        "timing_curve": {"enum": ["snappy", "smooth", "fluid"]},
+        "camera_drift": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "intro": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "wordmark": {"type": "string", "maxLength": 40},
+        "kicker": {"type": "string", "maxLength": 60},
+        "tagline": {"type": "string", "maxLength": 120},
+        "duration_s": {"type": "number", "minimum": 2, "maximum": 12},
+        "style": {"enum": ["kinetic-type", "logo-reveal", "split-flip"]}
+      }
+    },
+    "outro": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "wordmark": {"type": "string", "maxLength": 40},
+        "cta": {"type": "string", "maxLength": 80},
+        "url": {"type": "string", "maxLength": 200},
+        "duration_s": {"type": "number", "minimum": 2, "maximum": 12},
+        "style": {"enum": ["kinetic-type", "logo-reveal", "split-flip"]}
+      }
+    },
+    "watermark": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "text": {"type": "string", "maxLength": 40},
+        "logo": {"type": "string", "maxLength": 200},
+        "position": {"enum": ["bottom-right", "bottom-left", "top-right", "top-left"]},
+        "opacity": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "sfx": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "whoosh": {"type": "boolean"},
+        "impact": {"type": "boolean"},
+        "riser": {"type": "boolean"},
+        "chime": {"type": "boolean"}
+      }
+    },
+    "consistency_anchors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fixed_caption": {"type": "boolean"},
+        "fixed_typography": {"type": "boolean"},
+        "fixed_palette_hue": {"type": "boolean"}
+      }
+    }
+  },
+  "required": ["identity"]
+}

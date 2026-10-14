@@ -1,0 +1,74 @@
+# Example channel A — a fast, technical "deep tech explainer" channel.
+# Distinct from default: teal/amber world, boxed captions, snappy motion,
+# mono-tech typography, aggressive pacing. Within the channel every video
+# keeps these anchors while the seeded director walks the pools.
+identity:
+  name: "Deep Circuit"
+  tagline: "How the machines actually work"
+  url: "https://deopcircuit.example"
+
+palette:
+  primary: "#0F3B47"    # deep teal
+  accent: "#F5A623"     # signal amber
+  fg: "#EAF4F6"
+  bg: "#071820"
+  family: "teal"
+  hue_jitter_deg: 6
+
+typography:
+  pairing: "mono-tech"
+
+caption:
+  style: "boxed"
+  animation_variants: ["slide", "fade"]
+
+motion:
+  transition_pool:
+    - zoom-punch
+    - glitch
+    - wipe
+    - slide-left
+    - slide-up
+  bg_pool:
+    - grid-pulse
+    - beams
+    - particles
+    - orbits
+  hero_bg_pool: [beams, mesh]
+  pacing: "energetic"
+  pacing_jitter: 0.3
+  timing_curve: "snappy"
+  camera_drift: 0.75
+
+intro:
+  enabled: true
+  wordmark: "DEEP CIRCUIT"
+  kicker: "signal // noise"
+  tagline: "How the machines actually work"
+  duration_s: 4.6
+  style: "kinetic-type"
+
+outro:
+  enabled: true
+  wordmark: "DEEP CIRCUIT"
+  cta: "Subscribe for the teardown"
+  url: "deopcircuit.example"
+  duration_s: 4.2
+  style: "kinetic-type"
+
+watermark:
+  enabled: true
+  text: "DEEP CIRCUIT"
+  position: "bottom-right"
+  opacity: 0.4
+
+sfx:
+  whoosh: true
+  impact: true
+  riser: false
+  chime: false
+
+consistency_anchors:
+  fixed_caption: true
+  fixed_typography: true
+  fixed_palette_hue: true

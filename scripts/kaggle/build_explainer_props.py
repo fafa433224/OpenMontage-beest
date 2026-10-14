@@ -305,6 +305,7 @@ def build_props(
     broll_pool: Optional[list] = None,
     theme: str = "flat-motion-graphics",
     bg: str = "#0F172A",
+    brand_profile: Any = None,
 ) -> dict:
     """Build Explainer props.
 
@@ -322,6 +323,11 @@ def build_props(
     broll_pool:
         B-roll entries: paths (synth, 8s assumed) or dicts with
         ``path``/``duration`` (real footage — durations probed by caller).
+    brand_profile:
+        Optional `lib.brand_profile.BrandProfile` — when set the props are
+        channel-branded: the seed binds to ``channel:project``, the
+        director walks the brand vocabulary, and ``themeConfig`` +
+        ``brandOverlay`` (watermark/wordmark/fonts) are emitted.
     """
     secs = script["sections"]
     assert len(secs) == len(durations), "one duration per section"
@@ -335,7 +341,21 @@ def build_props(
     if brief is None and llm_client is not None:
         brief = llm_creative_brief(script, llm_client)
 
-    director = CreativeDirector(seed=seed, brief=brief)
+    brand_anchors: Optional[dict] = None
+    brand_overlay: Optional[dict] = None
+    theme_config: Optional[dict] = None
+    channel_id = ""
+    if brand_profile is not None:
+        channel_id = getattr(brand_profile, "channel_id", "")
+        project_id = str(seed)
+        # Bind the channel identity into the seed: same channel stays
+        # recognisable, different projects drift, retries identical.
+        seed = brand_profile.project_seed(project_id)
+        brand_anchors = brand_profile.director_overrides(project_id)["brand"]
+        brand_overlay = brand_profile.brand_overlay_props()
+        theme_config = brand_profile.theme_config()
+
+    director = CreativeDirector(seed=seed, brief=brief, brand=brand_anchors)
     broll = _normalize_broll(broll_pool if broll_pool is not None else DEFAULT_BROLL_POOL)
 
     cuts, start = [], 0.0
@@ -367,7 +387,7 @@ def build_props(
     custom_palettes = [director.palette_for_section(i, len(secs)) for i in range(len(secs))]
     transition_speed = {"calm": 1.4, "standard": 1.0, "energetic": 0.75}[director.pacing]
 
-    return {
+    props = {
         "theme": theme,
         "sectionCount": len(secs),
         "cuts": cuts,
@@ -385,12 +405,21 @@ def build_props(
         "durationSeconds": round(start, 3),
         "creativeBrief": {
             "seed": str(seed), "mood": director.brief.get("mood", ""),
+            "channel": channel_id,
             "pacing": director.pacing,
             "captionStyle": caption_style["look"],
             "brollMoods": director.broll_moods,
             "rationale": director.brief.get("rationale", ""),
         },
     }
+    # Brand plumbing — partial ThemeConfig merged over the default by
+    # Root.resolveTheme, plus the BrandOverlay layer props (watermark,
+    # wordmark, fonts). Both are optional on the TS side.
+    if theme_config is not None:
+        props["themeConfig"] = theme_config
+    if brand_overlay is not None:
+        props["brandOverlay"] = brand_overlay
+    return props
 
 
 if __name__ == "__main__":

@@ -214,6 +214,12 @@ def build_palette(family: str, variant: int = 0) -> dict[str, str]:
     }
 
 
+def _shift_hex_hue(hex_color: str, degrees: float) -> str:
+    """Rotate a hex color's hue by ``degrees`` (keeps S/L)."""
+    h, s, l = _hex_to_hsl(hex_color)
+    return _hsl_to_hex((h + degrees) % 360.0, s, l)
+
+
 def palette_from_colors(primary: str, accent: str, variant: int = 0) -> dict[str, str]:
     """Derive a ScenePalette from explicit theme colors (playbook-driven)."""
     h, s, _ = _hex_to_hsl(primary)
@@ -229,7 +235,7 @@ def palette_from_colors(primary: str, accent: str, variant: int = 0) -> dict[str
         "accent": _hsl_to_hex(ha, min(0.85, max(sa, 0.7)), 0.62),
         "text": "#F7F9FF",
         "muted": _hsl_to_hex(h, 0.18, 0.68),
-        "glass": _hsl_to_hex(h, 0.35, 0.16).replace("#", "rgba(").replace("", "")[:0] or f"rgba({int(_hsl_to_hex(h,0.4,0.5)[1:3],16)},{int(_hsl_to_hex(h,0.4,0.5)[3:5],16)},{int(_hsl_to_hex(h,0.4,0.5)[5:7],16)},0.72)",
+        "glass": f"rgba({int(_hsl_to_hex(h,0.4,0.5)[1:3],16)},{int(_hsl_to_hex(h,0.4,0.5)[3:5],16)},{int(_hsl_to_hex(h,0.4,0.5)[5:7],16)},0.72)",
         "glassEdge": f"rgba({int(_hsl_to_hex(ha,0.8,0.62)[1:3],16)},{int(_hsl_to_hex(ha,0.8,0.62)[3:5],16)},{int(_hsl_to_hex(ha,0.8,0.62)[5:7],16)},0.35)",
     }
 
@@ -315,9 +321,22 @@ class CreativeDirector:
         (a CAPTION_STYLE_PACKS key), ``palette_family``, ``pacing``
         (calm/standard/energetic), ``broll_moods`` (list of search words),
         ``bg_intensity`` (0-1).
+    brand:
+        Optional channel brand anchors dict — the ``brand`` payload from
+        ``lib.brand_profile.BrandProfile.director_overrides()``. When set,
+        the director works INSIDE the channel envelope: palettes derive
+        from the brand colors (with seeded hue jitter bounded by the
+        brand), the caption pack is the brand's, and the pools are the
+        brand's vocabulary. Per-project drift still comes from the seed —
+        same channel stays recognisable, no two videos identical.
     """
 
-    def __init__(self, seed: Any = None, brief: Optional[dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        seed: Any = None,
+        brief: Optional[dict[str, Any]] = None,
+        brand: Optional[dict[str, Any]] = None,
+    ) -> None:
         if seed is None:
             seed = f"project-{time_ns()}"
         if isinstance(seed, int):
@@ -327,6 +346,7 @@ class CreativeDirector:
             self.seed_int = int.from_bytes(digest[:4], "big")
         self.rng = random.Random(self.seed_int)
         self.brief = dict(brief or {})
+        self.brand = dict(brand or {})
 
         # Mood → palette family chain, seeded so each project differs.
         mood = str(self.brief.get("mood", "")).lower()
@@ -337,23 +357,62 @@ class CreativeDirector:
         self.family_chain = list(families)
         self.rng.shuffle(self.family_chain)
 
-        # Pre-generate the section palettes for this family chain.
-        self._palettes: list[dict[str, str]] = [
-            build_palette(self.family_chain[i % len(self.family_chain)], variant=i // max(1, len(self.family_chain)))
-            for i in range(12)
-        ]
+        # Pre-generate the section palettes.
+        if self.brand.get("primary") and self.brand.get("accent"):
+            # Channel mode: derive from brand anchors. The hue jitter is
+            # seeded per project and bounded by the brand's jitter budget —
+            # every video of the channel stays in-family, none identical.
+            jitter_budget = float(self.brand.get("hue_jitter", 8.0))
+            jitter = self.rng.uniform(-jitter_budget, jitter_budget)
+            primary = _shift_hex_hue(str(self.brand["primary"]), jitter)
+            accent = _shift_hex_hue(str(self.brand["accent"]), jitter)
+            self._palettes: list[dict[str, str]] = [
+                palette_from_colors(primary, accent, variant=i) for i in range(12)
+            ]
+        else:
+            self._palettes = [
+                build_palette(self.family_chain[i % len(self.family_chain)], variant=i // max(1, len(self.family_chain)))
+                for i in range(12)
+            ]
 
-        # Caption style: LLM choice wins, else seeded pick.
+        # Caption style: brand anchor wins (with micro-variant drift),
+        # then LLM choice, then seeded pick.
         cap = str(self.brief.get("caption_style", "")).lower()
         self._caption_style = CAPTION_STYLE_PACKS.get(cap)
+        if self._caption_style is None and self.brand.get("caption_style"):
+            self._caption_style = CAPTION_STYLE_PACKS.get(str(self.brand["caption_style"]))
         if self._caption_style is None:
             self._caption_style = self.rng.choice(list(CAPTION_STYLE_PACKS.values()))
+        # Intra-channel caption micro-variation: seeded pick from the
+        # brand's allowed animation variants (never the whole catalog).
+        brand_caption_variants = [
+            str(v) for v in (self.brand.get("caption_variants") or []) if v
+        ]
+        if brand_caption_variants:
+            self._caption_style = {
+                **self._caption_style,
+                "animation": self.rng.choice(brand_caption_variants),
+            }
 
         # Pools — seeded shuffles with no-immediate-repeat sampling.
-        self._transitions = list(TRANSITION_STYLES)
+        # In channel mode the walk stays INSIDE the brand vocabulary.
+        brand_transitions = [
+            str(t) for t in (self.brand.get("transition_pool") or []) if t in TRANSITION_STYLES
+        ]
+        brand_bg = [str(b) for b in (self.brand.get("bg_pool") or []) if b in BG_STYLES]
+        brand_hero_bg = [
+            str(b) for b in (self.brand.get("hero_bg_pool") or []) if b in HERO_BG_STYLES
+        ]
+        self._brand_transitions = brand_transitions or None
+        self._brand_bg = brand_bg or None
+        self._brand_hero_bg = brand_hero_bg or None
+
+        self._transitions = list(brand_transitions or TRANSITION_STYLES)
         self.rng.shuffle(self._transitions)
-        self._bg_styles = list(BG_STYLES)
+        self._bg_styles = list(brand_bg or BG_STYLES)
         self.rng.shuffle(self._bg_styles)
+        self._hero_bg_styles = list(brand_hero_bg or HERO_BG_STYLES)
+        self.rng.shuffle(self._hero_bg_styles)
         self._aligns = list(ALIGNMENTS)
         self.rng.shuffle(self._aligns)
         self._last_transition: Optional[str] = None
@@ -367,9 +426,20 @@ class CreativeDirector:
             "align": self.rng.randrange(len(ALIGNMENTS)),
         }
 
-        # Pacing: cut-length preference scaling.
+        # Pacing: brand base (jittered per project within the brand's
+        # jitter budget) with an LLM override still allowed on top.
+        self.pacing = "standard"
+        brand_pacing = str(self.brand.get("pacing", "")).lower()
+        if brand_pacing in ("calm", "standard", "energetic"):
+            jitter_amt = float(self.brand.get("pacing_jitter", 0.5))
+            if self.rng.random() < jitter_amt:
+                order = ["calm", "standard", "energetic"]
+                idx = order.index(brand_pacing) + self.rng.choice((-1, 1))
+                brand_pacing = order[max(0, min(2, idx))]
+            self.pacing = brand_pacing
         pacing = str(self.brief.get("pacing", "")).lower()
-        self.pacing = pacing if pacing in ("calm", "standard", "energetic") else "standard"
+        if pacing in ("calm", "standard", "energetic"):
+            self.pacing = pacing
 
         self.broll_moods: list[str] = [
             str(m) for m in (self.brief.get("broll_moods") or []) if str(m).strip()
@@ -378,8 +448,16 @@ class CreativeDirector:
     # -- per-cut creative picks ------------------------------------------------
 
     def transition(self, cut_type: str, index: int) -> str:
-        """Typed + seeded transition, never repeating back-to-back."""
+        """Typed + seeded transition, never repeating back-to-back.
+
+        In channel mode the typed pool is intersected with the brand's
+        transition vocabulary; if the brand allows none of a type's
+        defaults, the brand pool itself is the walk.
+        """
         pool = TYPE_TRANSITIONS.get(cut_type, self._transitions)
+        if self._brand_transitions:
+            typed_in_brand = [t for t in pool if t in self._brand_transitions]
+            pool = typed_in_brand or self._brand_transitions
         if len(pool) == 1:
             return pool[0]
         pick = pool[(index + self._pool_offsets["transition"]) % len(pool)]
@@ -389,7 +467,7 @@ class CreativeDirector:
         return pick
 
     def bg_style(self, index: int, is_hero: bool = False) -> str:
-        pool = HERO_BG_STYLES if is_hero else self._bg_styles
+        pool = self._hero_bg_styles if is_hero else self._bg_styles
         pick = pool[(index + self._pool_offsets["bg"]) % len(pool)]
         if pick == self._last_bg and len(pool) > 1:
             pick = pool[(index + self._pool_offsets["bg"] + 1) % len(pool)]

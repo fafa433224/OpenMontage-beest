@@ -1,0 +1,69 @@
+# Example channel B — a calm, cinematic storytelling channel.
+# Distinct envelope from both default and tech-deep: sunset/warm hues,
+# editorial serif headings, lower-third captions, fluid motion, calm pace.
+identity:
+  name: "Story Loops"
+  tagline: "Small true stories, told slowly"
+  url: "https://storyloops.example"
+
+palette:
+  primary: "#40221C"    # roasted umber
+  accent: "#E8A87C"     # dusk peach
+  fg: "#F9F1E9"
+  bg: "#140D0A"
+  family: "sunset"
+  hue_jitter_deg: 10
+
+typography:
+  pairing: "editorial-serif"
+
+caption:
+  style: "lower-third"
+  animation_variants: ["slide", "fade"]
+
+motion:
+  transition_pool:
+    - rise
+    - slide-right
+    - wipe
+    - slide-up
+  bg_pool:
+    - aurora
+    - waves
+    - grain
+    - mesh
+  hero_bg_pool: [aurora, mesh]
+  pacing: "calm"
+  pacing_jitter: 0.4
+  timing_curve: "fluid"
+  camera_drift: 0.45
+
+intro:
+  enabled: true
+  wordmark: "Story Loops"
+  kicker: "a small true story"
+  tagline: "Told slowly, on purpose"
+  duration_s: 6.0
+  style: "logo-reveal"
+
+outro:
+  enabled: true
+  wordmark: "Story Loops"
+  cta: "The next loop arrives Sunday"
+  url: "storyloops.example"
+  duration_s: 5.2
+  style: "logo-reveal"
+
+watermark:
+  enabled: false
+
+sfx:
+  whoosh: false
+  impact: false
+  riser: true
+  chime: true
+
+consistency_anchors:
+  fixed_caption: true
+  fixed_typography: true
+  fixed_palette_hue: true

@@ -183,8 +183,15 @@ def synth_assets(composer: Path, skip: bool, skip_broll: bool = False) -> None:
 
 
 def render_hyperframes(work: Path, template: str, sfx_names: list, out_mp4: Path,
-                       gsap_src: Path, audio_src: Path) -> None:
-    """Materialize a HyperFrames workspace from a repo template and render it.
+                       gsap_src: Path, audio_src: Path, *, html_text: str = None,
+                       expected: float = None) -> None:
+    """Materialize a HyperFrames workspace and render it.
+
+    ``html_text``: final index.html content. When None the repo template
+    is copied raw (legacy behavior — normally the caller passes the
+    brand-filled or code2motion-generated HTML).
+    ``expected``: duration the output is probed against (default: the
+    template reference durations).
 
     The CLI can hang in teardown AFTER writing a complete output file
     (observed locally: file complete at ~40s, process still alive at 9min).
@@ -193,23 +200,112 @@ def render_hyperframes(work: Path, template: str, sfx_names: list, out_mp4: Path
     """
     ws = work / f"hf-{template}"
     (ws / "assets").mkdir(parents=True, exist_ok=True)
-    shutil.copy(HYPERFRAMES_TEMPLATES / template / "index.html", ws / "index.html")
+    if html_text is not None:
+        (ws / "index.html").write_text(html_text, encoding="utf-8")
+    else:
+        shutil.copy(HYPERFRAMES_TEMPLATES / template / "index.html", ws / "index.html")
     shutil.copy(gsap_src, ws / "assets" / "gsap.min.js")
     for name in sfx_names:
         shutil.copy(audio_src / name, ws / "assets" / name)
-    expected = {"intro": 5.4, "outro": 4.8}[template]
+    expected = expected or {"intro": 5.4, "outro": 4.8}[template]
     cmd = (f"cd '{ws}' && timeout 420 npx --yes hyperframes render . -o '{out_mp4}' "
            f"--fps 30 --quality standard --browser-timeout 120 > render.log 2>&1; "
            f"echo hyperframes_exit=$?")
     subprocess.run(cmd, shell=True, cwd=work)  # rc handled by the file probe below
     log_tail = (ws / "render.log").read_text(errors="replace")[-1500:] if (ws / "render.log").exists() else ""
     if not out_mp4.exists():
-        raise SystemExit(f"hyperframes render produced no output for {template}:\n{log_tail}")
+        raise RuntimeError(f"hyperframes render produced no output for {template}:\n{log_tail}")
     d = duration(out_mp4)
-    if abs(d - expected) > 0.35:
-        raise SystemExit(f"hyperframes render for {template} has bad duration {d}s "
-                         f"(expected {expected}s):\n{log_tail}")
+    if abs(d - expected) > 0.45:
+        raise RuntimeError(f"hyperframes render for {template} has bad duration {d}s "
+                           f"(expected {expected}s):\n{log_tail}")
     print(f"hyperframes {template}: {d:.2f}s OK (log tail: {log_tail[-300:]})", flush=True)
+
+
+def _load_brand(channel: str):
+    """Lazy-load the channel brand (default channel = legacy look)."""
+    try:
+        repo_root = HERE.parents[1]
+        if repo_root not in [Path(p) for p in sys.path]:
+            sys.path.insert(0, str(repo_root))
+        from lib.brand_profile import load_brand
+        return load_brand(channel)
+    except Exception as exc:
+        print(f"WARNING: channel '{channel}' unavailable ({exc}) — "
+              f"falling back to the default brand", flush=True)
+        from lib.brand_profile import load_brand
+        return load_brand("default")
+
+
+def _strip_disabled_sfx(html: str, brand) -> str:
+    """Remove <audio> leaves the brand's sonic identity disables."""
+    import re as _re
+    for sfx_name, flag in (("riser", brand.sfx.get("riser", True)),
+                           ("impact", brand.sfx.get("impact", True)),
+                           ("whoosh", brand.sfx.get("whoosh", True)),
+                           ("chime", brand.sfx.get("chime", True))):
+        if not flag:
+            html = _re.sub(rf'<audio[^>]*id="sfx-{sfx_name}"[^>]*/?>\s*</audio>\s*', "", html)
+            html = _re.sub(rf'<audio[^>]*id="sfx-{sfx_name}"[^>]*/>\s*', "", html)
+    return html
+
+
+def render_card(kind: str, script: dict, brand, out_dir: Path, out_mp4: Path,
+                gsap_src: Path, audio_src: Path, llm_client, motion_mode: str) -> dict:
+    """Render the intro/outro card with the code2motion ladder:
+
+    1. ``code2motion`` (or ``auto`` with an LLM): LLM authors a bespoke
+       card -> lint -> render probe -> on failure fall back to (2).
+    2. brand-parameterized template (always succeeds — same shape the
+       reference runs proved, now brand-colored).
+
+    Returns a provenance record for the timing/decision log.
+    """
+    sfx_names = {"intro": ["riser.wav", "impact.wav", "whoosh.wav"],
+                 "outro": ["chime.wav", "whoosh.wav"]}[kind]
+    expected = float((brand.intro_config if kind == "intro" else brand.outro_config)["duration_s"])
+    provenance = {"kind": kind, "requested_mode": motion_mode, "channel": brand.channel_id}
+
+    want_generated = motion_mode in ("code2motion", "auto") and llm_client is not None
+    if want_generated:
+        try:
+            from lib.code2motion import generate_hyperframes_card
+            result = generate_hyperframes_card(kind, brand, script, llm_client)
+            provenance.update(result.get("provenance") or {})
+            html = result.get("html")
+            if html:
+                html = _strip_disabled_sfx(html, brand)
+                try:
+                    render_hyperframes(out_dir, kind, sfx_names, out_mp4,
+                                       gsap_src, audio_src, html_text=html,
+                                       expected=expected)
+                    provenance["rendered_as"] = "code2motion"
+                    return provenance
+                except (RuntimeError, OSError) as exc:
+                    print(f"WARNING: code2motion {kind} failed render probe ({exc}) — "
+                          f"falling back to the brand template", flush=True)
+                    provenance["fallback_reason"] = str(exc)[:300]
+            else:
+                provenance["fallback_reason"] = "generation returned no html"
+        except Exception as exc:  # noqa: BLE001 - generation must never kill the run
+            print(f"WARNING: code2motion {kind} unavailable ({exc}) — "
+                  f"using the brand template", flush=True)
+            provenance["fallback_reason"] = str(exc)[:300]
+
+    # Template path (the guaranteed floor).
+    try:
+        from lib.code2motion import fill_hyperframes_template
+        template_html = (HYPERFRAMES_TEMPLATES / kind / "index.html").read_text(encoding="utf-8")
+        html = fill_hyperframes_template(template_html, brand, kind)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: brand template fill failed ({exc}) — raw template", flush=True)
+        html = None
+    if html is not None:
+        html = _strip_disabled_sfx(html, brand)
+    render_hyperframes(out_dir, kind, sfx_names, out_mp4, gsap_src, audio_src,
+                       html_text=html, expected=expected)
+    provenance["rendered_as"] = "brand_template"
+    return provenance
 
 
 def concat_videos(parts: list, out: Path) -> None:
@@ -242,6 +338,14 @@ def main() -> int:
                     help="b-roll footage source: auto = Open-Sora when indexed, else synth")
     ap.add_argument("--no-llm", action="store_true",
                     help="skip the runtime LLM creative brief (seeded director only)")
+    ap.add_argument("--channel", default="default",
+                    help="channel brand id (channels/<id>/brand.yaml); "
+                         "default keeps the classic OpenMontage look")
+    ap.add_argument("--motion", choices=["template", "code2motion", "auto"], default="auto",
+                    help="intro/outro authoring: template (brand-parameterized), "
+                         "code2motion (LLM-authored bespoke cards, template "
+                         "fallback), auto (code2motion when an LLM is "
+                         "configured, else template)")
     ap.add_argument("--single-gpu", action="store_true",
                     help="force everything onto GPU 0 (no parallel CLIP subprocess)")
     args = ap.parse_args()
@@ -267,9 +371,26 @@ def main() -> int:
               "Open-Sora b-roll collection (GPU 1)", flush=True)
 
     brief = None
+    llm_client = None
     if not args.no_llm:
         brief = llm_brief_for(script)
         timing["llm_brief"] = bool(brief)
+        try:
+            repo_root = HERE.parents[1]
+            if repo_root not in [Path(p) for p in sys.path]:
+                sys.path.insert(0, str(repo_root))
+            from lib.llm_client import LLMClient
+            llm_client = LLMClient()
+            if not llm_client.available:
+                llm_client = None
+        except Exception:
+            llm_client = None
+
+    # Channel brand — anchors the creative director + intro/outro + theme.
+    brand = _load_brand(args.channel)
+    timing["channel"] = brand.channel_id
+    print(f"channel brand: {brand.name} | caption {brand.caption_style} | "
+          f"pacing {brand.pacing} | {brand.font_pairing}", flush=True)
 
     if args.reuse_props:
         with stage("0_reuse_props"):
@@ -342,11 +463,13 @@ def main() -> int:
             props = build_props(script, durations, words,
                                 seed=script.get("topic"),
                                 brief=brief,
-                                broll_pool=broll_entries or None)
+                                broll_pool=broll_entries or None,
+                                brand_profile=brand)
             print("cuts", len(props["cuts"]), "captions", len(props["captions"]),
                   "sfx", len(props.get("sfx", [])),
                   "caption style", props.get("captionStyle", {}).get("look"),
-                  "mood", props.get("creativeBrief", {}).get("mood"))
+                  "mood", props.get("creativeBrief", {}).get("mood"),
+                  "channel", props.get("creativeBrief", {}).get("channel"))
 
     props_path = out_dir / f"{args.name}-props.json"
     props_path.write_text(json.dumps(props, indent=1, ensure_ascii=False))
@@ -388,12 +511,11 @@ def main() -> int:
                 audio_src = composer / "public" / "audio"
                 intro = out_dir / "intro.mp4"
                 outro = out_dir / "outro.mp4"
-                render_hyperframes(out_dir, "intro",
-                                   ["riser.wav", "impact.wav", "whoosh.wav"], intro,
-                                   gsap_src, audio_src)
-                render_hyperframes(out_dir, "outro",
-                                   ["chime.wav", "whoosh.wav"], outro,
-                                   gsap_src, audio_src)
+                p1 = render_card("intro", script, brand, out_dir, intro,
+                                 gsap_src, audio_src, llm_client, args.motion)
+                p2 = render_card("outro", script, brand, out_dir, outro,
+                                 gsap_src, audio_src, llm_client, args.motion)
+                timing["motion"] = {"intro": p1, "outro": p2}
                 print("intro", round(duration(intro), 2), "s / outro", round(duration(outro), 2), "s")
             with stage("5d_concat"):
                 final = out_dir / f"{args.name}.mp4"

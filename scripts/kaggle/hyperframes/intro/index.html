@@ -2,20 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>OpenMontage — Intro</title>
+  <title>{{WORDMARK}} — Intro</title>
   <!--
-    HyperFrames kinetic-typography intro (5.4s, 1920x1080@30).
+    Brand-parameterized HyperFrames kinetic-typography intro
+    (1920x1080@30, reference duration 5.4s).
 
-    Rendered by the HyperFrames engine (HTML + GSAP), then concatenated with
-    the Remotion-rendered body and the outro — the "both engines make one
-    video" handoff layer.
+    Tokens are filled by lib/code2motion.fill_hyperframes_template() from
+    the channel brand profile (lib/brand_profile.py) — the default channel
+    reproduces the original OpenMontage look exactly.
+
+    Fable-style fractional timing: every GSAP position/duration is a
+    fraction of the reference duration, scaled by S = D / 5.4, so any
+    brand intro duration renders with correct choreography.
 
     Contract notes (validated with `hyperframes lint`):
       * exactly one root index.html with data-composition-id per workspace,
-      * one visual clip (#scene) + leaf audio clips with ids (media_missing_id
-        otherwise silences the audio),
-      * GSAP animates transforms/opacity ONLY (layout props like top or
-        letterSpacing snap to integer pixels under seek-by-frame capture),
+      * one visual clip (#scene) + leaf audio clips with ids,
+      * GSAP animates transforms/opacity ONLY,
       * no gsap.utils.random() — per-letter rotations come from a fixed
         array so parallel workers render identical frames,
       * all repeats bounded, timeline paused and registered at
@@ -23,11 +26,15 @@
   -->
   <style>
     :root {
-      --color-bg: #0B1026;
-      --color-fg: #F4F6FF;
-      --color-accent: #8B7CFF;
-      --color-accent2: #2DD4BF;
-      --font-heading: 'Outfit', 'Inter', 'Segoe UI', Arial, sans-serif;
+      --color-bg: {{BG}};
+      --color-fg: {{FG}};
+      --color-primary: {{PRIMARY}};
+      --color-accent: {{ACCENT}};
+      --bg-rgb: {{BG_RGB}};
+      --fg-rgb: {{FG_RGB}};
+      --primary-rgb: {{PRIMARY_RGB}};
+      --accent-rgb: {{ACCENT_RGB}};
+      --font-heading: '{{FONT_HEAD}}', 'Outfit', 'Inter', 'Segoe UI', Arial, sans-serif;
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: #000; }
@@ -45,15 +52,15 @@
     .base {
       position: absolute; inset: 0;
       background:
-        radial-gradient(ellipse at 30% 35%, rgba(109, 91, 246, 0.20) 0%, transparent 55%),
-        radial-gradient(ellipse at 72% 68%, rgba(45, 212, 191, 0.13) 0%, transparent 50%),
-        linear-gradient(165deg, #0B1026 0%, #151B3B 60%, #0B1026 100%);
+        radial-gradient(ellipse at 30% 35%, rgba(var(--accent-rgb), 0.20) 0%, transparent 55%),
+        radial-gradient(ellipse at 72% 68%, rgba(var(--primary-rgb), 0.13) 0%, transparent 50%),
+        linear-gradient(165deg, var(--color-bg) 0%, rgba(var(--primary-rgb), 0.16) 60%, var(--color-bg) 100%);
     }
     .grid {
       position: absolute; inset: -60px;
       background-image:
-        linear-gradient(rgba(244, 246, 255, 0.045) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(244, 246, 255, 0.045) 1px, transparent 1px);
+        linear-gradient(rgba(var(--fg-rgb), 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(var(--fg-rgb), 0.045) 1px, transparent 1px);
       background-size: 96px 96px;
     }
     .vignette {
@@ -63,7 +70,7 @@
     .scanline {
       position: absolute; left: 0; top: 42%;
       width: 100%; height: 3px;
-      background: linear-gradient(90deg, transparent, rgba(45, 212, 191, 0.5), transparent);
+      background: linear-gradient(90deg, transparent, rgba(var(--primary-rgb), 0.5), transparent);
     }
 
     /* ---- Stage ---- */
@@ -81,14 +88,14 @@
       font-weight: 600;
       letter-spacing: 0.5em;
       text-transform: uppercase;
-      color: var(--color-accent2);
+      color: var(--color-primary);
       margin-bottom: 34px;
     }
     .wordmark {
       display: flex;
       justify-content: center;
       flex-wrap: nowrap;
-      font-size: 168px;
+      font-size: 168px; /* auto-fitted by JS to the wordmark length */
       font-weight: 800;
       line-height: 1;
       color: var(--color-fg);
@@ -96,32 +103,33 @@
     }
       .wordmark span { display: inline-block; }
       .wordmark .open { color: var(--color-accent); }
+      .wordmark .sp { margin-right: 0.18em; }
     .tagline {
       margin-top: 38px;
       font-size: 34px;
       font-weight: 400;
       letter-spacing: 0.34em;
       text-transform: uppercase;
-      color: rgba(244, 246, 255, 0.82);
+      color: rgba(var(--fg-rgb), 0.82);
     }
     .underline {
       margin: 30px auto 0;
       width: 520px; height: 4px;
       border-radius: 2px;
-      background: linear-gradient(90deg, transparent, var(--color-accent2), transparent);
+      background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
     }
     .corner {
       position: absolute;
       width: 74px; height: 74px;
-      border: 4px solid rgba(139, 124, 255, 0.85);
+      border: 4px solid rgba(var(--accent-rgb), 0.85);
     }
       .corner.tl { top: -64px; left: -84px;  border-right: none; border-bottom: none; border-radius: 10px 0 0 0; }
       .corner.tr { top: -64px; right: -84px; border-left: none;  border-bottom: none; border-radius: 0 10px 0 0; }
-      .corner.bl { bottom: -84px; left: -84px;  border-right: none; border-top: none; border-radius: 0 0 0 10px; }
-      .corner.br { bottom: -84px; right: -84px; border-left: none;  border-top: none; border-radius: 0 0 10px 0; }
+      .corner.bl { bottom: -84px; left: -84px; border-right: none; border-top: none; border-radius: 0 0 0 10px; }
+      .corner.br { bottom: -84px; right: -84px; border-left: none; border-top: none; border-radius: 0 0 10px 0; }
     .shine {
       position: absolute; inset: -40px;
-      background: linear-gradient(105deg, transparent 42%, rgba(244, 246, 255, 0.16) 50%, transparent 58%);
+      background: linear-gradient(105deg, transparent 42%, rgba(var(--fg-rgb), 0.16) 50%, transparent 58%);
       pointer-events: none;
     }
     .fadeout {
@@ -134,10 +142,10 @@
   <script src="assets/gsap.min.js"></script>
 </head>
 <body>
-  <div data-composition-id="root" data-start="0" data-duration="5.4" data-width="1920" data-height="1080" data-fps="30">
+  <div data-composition-id="root" data-start="0" data-duration="{{DURATION}}" data-width="1920" data-height="1080" data-fps="30">
 
     <!-- Track 0: the whole visual scene -->
-    <div id="scene" class="clip" data-start="0" data-duration="5.4" data-track-index="0">
+    <div id="scene" class="clip" data-start="0" data-duration="{{DURATION}}" data-track-index="0">
       <div class="base"></div>
       <div class="grid"></div>
       <div class="scanline"></div>
@@ -145,11 +153,9 @@
 
       <div class="stage-wrap">
         <div class="frame">
-          <div class="kicker">The open-source pipeline</div>
-          <div class="wordmark">
-            <span class="open">O</span><span class="open">p</span><span class="open">e</span><span class="open">n</span><span class="open" style="margin-right:0.18em">&nbsp;</span><span>M</span><span>o</span><span>n</span><span>t</span><span>a</span><span>g</span><span>e</span>
-          </div>
-          <div class="tagline">Agentic video production</div>
+          <div class="kicker">{{KICKER}}</div>
+          <div class="wordmark" id="wordmark" data-wordmark="{{WORDMARK}}"></div>
+          <div class="tagline">{{TAGLINE}}</div>
           <div class="underline"></div>
           <div class="corner tl"></div>
           <div class="corner tr"></div>
@@ -163,47 +169,79 @@
     </div>
 
     <!-- Audio (leaf clips with stable ids — required for media discovery) -->
-    <audio id="sfx-riser"  data-start="0.15" data-duration="1.6" data-track-index="3" src="assets/riser.wav"  data-volume="0.55"></audio>
-    <audio id="sfx-impact" data-start="1.35" data-duration="0.8" data-track-index="4" src="assets/impact.wav" data-volume="0.6"></audio>
-    <audio id="sfx-whoosh" data-start="4.45" data-duration="0.6" data-track-index="5" src="assets/whoosh.wav" data-volume="0.4"></audio>
+    <audio id="sfx-riser"  data-start="{{S_RISER}}"  data-duration="1.6" data-track-index="3" src="assets/riser.wav"  data-volume="0.55"></audio>
+    <audio id="sfx-impact" data-start="{{S_IMPACT}}" data-duration="0.8" data-track-index="4" src="assets/impact.wav" data-volume="0.6"></audio>
+    <audio id="sfx-whoosh" data-start="{{S_WHOOSH}}" data-duration="0.6" data-track-index="5" src="assets/whoosh.wav" data-volume="0.4"></audio>
 
     <script>
       window.__timelines = window.__timelines || {};
+
+      // --- Build the wordmark per-letter spans from the brand wordmark ---
+      // First word is accent-colored (.open), the rest inherit fg.
+      (function buildWordmark() {
+        var el = document.getElementById("wordmark");
+        var text = (el.dataset.wordmark || "").trim();
+        var words = text.split(/\s+/).filter(Boolean);
+        words.forEach(function (w, wi) {
+          w.split("").forEach(function (ch) {
+            var s = document.createElement("span");
+            s.textContent = ch;
+            if (wi === 0) s.className = "open";
+            el.appendChild(s);
+          });
+          if (wi < words.length - 1) {
+            var sp = document.createElement("span");
+            sp.className = "sp";
+            sp.innerHTML = "&nbsp;";
+            el.appendChild(sp);
+          }
+        });
+        // Auto-fit: reference size 168px fits ~11 letters.
+        var letters = text.replace(/\s/g, "").length || 11;
+        var fit = Math.max(84, Math.min(168, Math.round(168 * 11 / letters)));
+        el.style.fontSize = fit + "px";
+      })();
+
       const tl = gsap.timeline({ paused: true });
+
+      // Fractional timing scale — the reference choreography is authored
+      // at 5.4s; any brand duration keeps the same beat structure.
+      const D = {{DURATION}};
+      const S = D / 5.4;
 
       // Fixed per-letter rotation offsets (no gsap.utils.random — workers
       // must render identical frames).
       const LETTER_ROTS = [-9, 6, -4, 11, 0, 8, -12, 5, -7, 10, -5, 9];
 
-      // --- Background life ---
-      tl.fromTo("#scene", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power1.out" }, 0);
+      // --- Background life (all positions × S) ---
+      tl.fromTo("#scene", { opacity: 0 }, { opacity: 1, duration: 0.5 * S, ease: "power1.out" }, 0);
       tl.fromTo(".grid",
         { scale: 1.18, opacity: 0, x: 0 },
-        { scale: 1.0, opacity: 1, x: 96, duration: 5.4, ease: "none" },
+        { scale: 1.0, opacity: 1, x: 96, duration: 5.4 * S, ease: "none" },
         0);
-      tl.fromTo(".scanline", { y: -260, opacity: 0 }, { y: 320, opacity: 1, duration: 3.6, ease: "power1.inOut" }, 0.2);
+      tl.fromTo(".scanline", { y: -260, opacity: 0 }, { y: 320, opacity: 1, duration: 3.6 * S, ease: "power1.inOut" }, 0.2 * S);
 
       // --- Wordmark letters: cascade slam with overshoot ---
       tl.fromTo(".wordmark span",
         { y: -170, opacity: 0, rotate: function (i) { return LETTER_ROTS[i % LETTER_ROTS.length]; }, scale: 1.3 },
-        { y: 0, opacity: 1, rotate: 0, scale: 1, duration: 0.62, ease: "back.out(1.7)", stagger: 0.052 },
-        0.55);
+        { y: 0, opacity: 1, rotate: 0, scale: 1, duration: 0.62 * S, ease: "back.out(1.7)", stagger: 0.052 * S },
+        0.55 * S);
 
       // --- Kicker + tagline: transform-only reveals ---
-      tl.fromTo(".kicker",  { opacity: 0, y: 26 },  { opacity: 1, y: 0, duration: 0.7,  ease: "power3.out" }, 1.55);
-      tl.fromTo(".tagline", { opacity: 0, y: 22 },  { opacity: 1, y: 0, duration: 0.66, ease: "power3.out" }, 1.85);
+      tl.fromTo(".kicker",  { opacity: 0, y: 26 },  { opacity: 1, y: 0, duration: 0.7 * S,  ease: "power3.out" }, 1.55 * S);
+      tl.fromTo(".tagline", { opacity: 0, y: 22 },  { opacity: 1, y: 0, duration: 0.66 * S, ease: "power3.out" }, 1.85 * S);
 
       // --- Underline draw + corner brackets + shine sweep ---
-      tl.fromTo(".underline", { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.55, ease: "power2.out" }, 2.15);
-      tl.fromTo(".corner", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2.2)", stagger: 0.07 }, 2.35);
-      tl.fromTo(".shine", { xPercent: -120 }, { xPercent: 120, duration: 1.05, ease: "power2.inOut" }, 2.45);
+      tl.fromTo(".underline", { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.55 * S, ease: "power2.out" }, 2.15 * S);
+      tl.fromTo(".corner", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.4 * S, ease: "back.out(2.2)", stagger: 0.07 * S }, 2.35 * S);
+      tl.fromTo(".shine", { xPercent: -120 }, { xPercent: 120, duration: 1.05 * S, ease: "power2.inOut" }, 2.45 * S);
 
       // --- Hold float (bounded yoyo) ---
-      tl.to(".frame", { y: -10, duration: 0.85, ease: "sine.inOut", yoyo: true, repeat: 1 }, 2.9);
+      tl.to(".frame", { y: -10, duration: 0.85 * S, ease: "sine.inOut", yoyo: true, repeat: 1 }, 2.9 * S);
 
       // --- Handoff punch: scale up + fade to black into the Remotion body ---
-      tl.to(".frame", { scale: 1.09, duration: 0.62, ease: "power2.in" }, 4.55);
-      tl.to(".fadeout", { opacity: 1, duration: 0.5, ease: "power1.in" }, 4.85);
+      tl.to(".frame", { scale: 1.09, duration: 0.62 * S, ease: "power2.in" }, Math.max(0.1, D - 0.85));
+      tl.to(".fadeout", { opacity: 1, duration: 0.5 * S, ease: "power1.in" }, Math.max(0, D - 0.55));
 
       window.__timelines["root"] = tl;
     </script>

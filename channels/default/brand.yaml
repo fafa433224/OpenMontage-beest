@@ -1,0 +1,78 @@
+# Default channel — neutral envelope (unbranded runs keep today's look,
+# modulo the seeded creative director). Copy this directory to create a
+# real channel, then change identity/palette/motion.
+identity:
+  name: "OpenMontage"
+  tagline: "Agentic video production"
+  url: "https://github.com/fafa433224/OpenMontage-beest"
+
+palette:
+  primary: "#1B2A4A"    # deep indigo-navy
+  accent: "#4E9AF1"     # bright azure
+  fg: "#F7F9FF"
+  bg: "#0B0E1A"
+  family: "indigo"
+  hue_jitter_deg: 8
+
+typography:
+  pairing: "modern-sans"
+
+caption:
+  style: "pill"
+  animation_variants: ["spring", "slide"]
+
+motion:
+  # The full vocabulary — the default channel drifts across everything.
+  transition_pool:
+    - slide-left
+    - slide-right
+    - slide-up
+    - zoom-punch
+    - wipe
+    - flip
+    - glitch
+    - rise
+  bg_pool:
+    - aurora
+    - mesh
+    - beams
+    - particles
+    - grid-pulse
+    - orbits
+    - waves
+    - grain
+  hero_bg_pool: [aurora, mesh, beams]
+  pacing: "standard"
+  pacing_jitter: 0.6
+  timing_curve: "smooth"
+  camera_drift: 0.6
+
+intro:
+  enabled: true
+  wordmark: "OpenMontage"
+  kicker: "The open-source pipeline"
+  tagline: "Agentic video production"
+  duration_s: 5.4
+  style: "kinetic-type"
+
+outro:
+  enabled: true
+  wordmark: "OpenMontage"
+  cta: "Clone the repo"
+  url: "https://github.com/fafa433224/OpenMontage-beest"
+  duration_s: 4.8
+  style: "kinetic-type"
+
+watermark:
+  enabled: false
+
+sfx:
+  whoosh: true
+  impact: true
+  riser: true
+  chime: true
+
+consistency_anchors:
+  fixed_caption: true
+  fixed_typography: true
+  fixed_palette_hue: true
