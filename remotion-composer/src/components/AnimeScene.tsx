@@ -280,6 +280,7 @@ export const AnimeScene: React.FC<AnimeSceneProps> = ({
           count={particleCount}
           color={particleColor}
           intensity={particleIntensity}
+          sceneDurationFrames={effectiveDuration}
         />
       )}
     </AbsoluteFill>

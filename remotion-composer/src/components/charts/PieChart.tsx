@@ -26,6 +26,8 @@ interface PieChartProps {
   centerValue?: string;
   showLegend?: boolean;
   animationStyle?: PieAnimationStyle;
+  /** Duration of the ENCLOSING cut in frames (not the composition). */
+  sceneDurationFrames?: number;
 }
 
 export const PieChart: React.FC<PieChartProps> = ({
@@ -40,9 +42,11 @@ export const PieChart: React.FC<PieChartProps> = ({
   centerValue,
   showLegend = true,
   animationStyle = "expand",
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   const total = data.reduce((sum, d) => sum + d.value, 0) || 1;
 
@@ -83,7 +87,7 @@ export const PieChart: React.FC<PieChartProps> = ({
   // Fade out near end
   const fadeOut = interpolate(
     frame,
-    [durationInFrames - 15, durationInFrames],
+    [sceneFrames - 15, sceneFrames],
     [1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );

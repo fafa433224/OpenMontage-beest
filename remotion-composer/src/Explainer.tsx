@@ -33,9 +33,8 @@ import type { ScreenshotStep } from "./components/ScreenshotScene";
 import { ProviderChip } from "./components/ProviderChip";
 import { resolveAsset } from "./lib/resolveAsset";
 import type { ParticleType } from "./components/ParticleOverlay";
-import { resolveTheme, type ThemeConfig, DEFAULT_THEME } from "./Root";
+import { resolveTheme, type ThemeConfig } from "./Root";
 import {
-  paletteForSection,
   paletteByIndex,
   effectivePalettes,
   paletteForSectionIn,
@@ -51,7 +50,6 @@ import {
   SceneTransition,
   CameraDrift,
   TransitionSweep,
-  transitionForIndex,
   transitionForCut,
   type TransitionStyle,
 } from "./motion/SceneTransition";
@@ -335,19 +333,27 @@ const Vignette: React.FC = () => (
 // Enhanced Image Scene — spring physics, parallax, variety
 // ---------------------------------------------------------------------------
 
-const ImageScene: React.FC<{ src: string; animation?: string }> = ({
+const ImageScene: React.FC<{
+  src: string;
+  animation?: string;
+  /** Duration of the ENCLOSING cut in frames — makes the exit crossfade run
+   *  at the right time instead of at composition end. */
+  sceneDurationFrames?: number;
+}> = ({
   src,
   animation,
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   // Smooth spring fade-in
   const fadeIn = spring({ frame, fps, config: { damping: 18, stiffness: 80 } });
 
   // Fade-out for crossfade effect
-  const fadeOutStart = durationInFrames - 8;
-  const fadeOut = interpolate(frame, [fadeOutStart, durationInFrames], [1, 0.3], {
+  const fadeOutStart = sceneFrames - 8;
+  const fadeOut = interpolate(frame, [fadeOutStart, sceneFrames], [1, 0.3], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -358,7 +364,7 @@ const ImageScene: React.FC<{ src: string; animation?: string }> = ({
   const anim = animation || "zoom-in";
 
   // Progress with easing — smoother than linear
-  const progress = interpolate(frame, [0, durationInFrames], [0, 1], {
+  const progress = interpolate(frame, [0, sceneFrames], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -665,6 +671,7 @@ const SceneRenderer: React.FC<{
         glass={palette.glass}
         glassEdge={palette.glassEdge}
         mutedColor={palette.muted}
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -709,6 +716,7 @@ const SceneRenderer: React.FC<{
         subtitleColor={palette.muted}
         scrimBackground="none"
         noScrim
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -743,6 +751,7 @@ const SceneRenderer: React.FC<{
         animationStyle={(cut.chartAnimation as any) || "grow-up"}
         showGrid={cut.showGrid} showValues={cut.showValues} backgroundColor={bgColor}
         textColor={textColor}
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -754,6 +763,7 @@ const SceneRenderer: React.FC<{
         showGrid={cut.showGrid} showMarkers={cut.showMarkers} showLegend={cut.showLegend}
         xLabel={cut.xLabel} yLabel={cut.yLabel} backgroundColor={bgColor}
         textColor={textColor}
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -765,6 +775,7 @@ const SceneRenderer: React.FC<{
         donut={cut.donut} centerLabel={cut.centerLabel} centerValue={cut.centerValue}
         showLegend={cut.showLegend} backgroundColor={bgColor}
         textColor={textColor}
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -775,6 +786,7 @@ const SceneRenderer: React.FC<{
         colors={cut.chartColors || theme.chartColors} animationStyle={(cut.chartAnimation as any) || "count-up"}
         backgroundColor={bgColor}
         textColor={textColor}
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -829,7 +841,9 @@ const SceneRenderer: React.FC<{
   const animation = cut.animation || cut.transform?.animation;
 
   if (cut.source && isImage(cut.source)) {
-    return maybeWrapWithBg(<ImageScene src={cut.source} animation={animation} />);
+    return maybeWrapWithBg(
+      <ImageScene src={cut.source} animation={animation} sceneDurationFrames={durationInFrames} />
+    );
   }
 
   if (cut.source && isVideo(cut.source)) {
@@ -848,20 +862,29 @@ const SceneRenderer: React.FC<{
 
   // Final fallback — try as image if source exists, otherwise show text_card
   if (cut.source) {
-    return maybeWrapWithBg(<ImageScene src={cut.source} animation={animation} />);
+    return maybeWrapWithBg(
+      <ImageScene src={cut.source} animation={animation} sceneDurationFrames={durationInFrames} />
+    );
   }
 
   // No source, no type — render as text card with cut id as fallback
-  return <TextCard text={cut.text || cut.id} color={textColor} backgroundColor={bgColor} />;
+  return <TextCard text={cut.text || cut.id} color={textColor} backgroundColor={bgColor} sceneDurationFrames={durationInFrames} />;
 };
 
 // ---------------------------------------------------------------------------
 // Overlay renderer
 // ---------------------------------------------------------------------------
 
-const OverlayRenderer: React.FC<{ overlay: Overlay; theme: ThemeConfig }> = ({
+const OverlayRenderer: React.FC<{
+  overlay: Overlay;
+  theme: ThemeConfig;
+  /** The overlay Sequence's own frame length — without it the components'
+   *  exit choreography would aim at the whole composition (dead code). */
+  durationInFrames: number;
+}> = ({
   overlay,
   theme,
+  durationInFrames,
 }) => {
   if (overlay.type === "section_title") {
     return (
@@ -871,6 +894,7 @@ const OverlayRenderer: React.FC<{ overlay: Overlay; theme: ThemeConfig }> = ({
         accentColor={overlay.accentColor || theme.accentColor}
         textColor={theme.textColor}
         position={(overlay.position as any) || "top-left"}
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -882,6 +906,7 @@ const OverlayRenderer: React.FC<{ overlay: Overlay; theme: ThemeConfig }> = ({
         accentColor={overlay.accentColor || theme.accentColor}
         textColor={theme.textColor}
         position={(overlay.position as any) || "bottom-right"}
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -894,6 +919,7 @@ const OverlayRenderer: React.FC<{ overlay: Overlay; theme: ThemeConfig }> = ({
         textColor={theme.textColor}
         subtitleColor={theme.mutedTextColor}
         scrimBackground={heroScrim(theme)}
+        sceneDurationFrames={durationInFrames}
       />
     );
   }
@@ -991,13 +1017,13 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
       {/* Layer 2: Overlays (section titles, stat reveals, hero titles) */}
       {overlays?.map((overlay, i) => {
         const from = Math.round(overlay.in_seconds * fps);
-        const duration = Math.round(
+        const duration = Math.max(1, Math.round(
           (overlay.out_seconds - overlay.in_seconds) * fps
-        );
+        ));
 
         return (
           <Sequence key={`overlay-${i}`} from={from} durationInFrames={duration}>
-            <OverlayRenderer overlay={overlay} theme={theme} />
+            <OverlayRenderer overlay={overlay} theme={theme} durationInFrames={duration} />
           </Sequence>
         );
       })}

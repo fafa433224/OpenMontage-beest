@@ -25,6 +25,8 @@ interface BarChartProps {
   showValues?: boolean;
   animationStyle?: BarAnimationStyle;
   barGap?: number;
+  /** Duration of the ENCLOSING cut in frames (not the composition). */
+  sceneDurationFrames?: number;
 }
 
 export const BarChart: React.FC<BarChartProps> = ({
@@ -39,9 +41,11 @@ export const BarChart: React.FC<BarChartProps> = ({
   showValues = true,
   animationStyle = "grow-up",
   barGap = 12,
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   const maxValue = Math.max(...data.map((d) => d.value), 1);
 
@@ -216,7 +220,7 @@ export const BarChart: React.FC<BarChartProps> = ({
           // Fade out near end
           const fadeOut = interpolate(
             frame,
-            [durationInFrames - 15, durationInFrames],
+            [sceneFrames - 15, sceneFrames],
             [1, 0],
             { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
           );

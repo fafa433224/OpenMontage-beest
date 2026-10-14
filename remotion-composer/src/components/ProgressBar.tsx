@@ -242,10 +242,9 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
                   height: "100%",
                   backgroundColor: color,
                   borderRadius,
-                  transition:
-                    animationStyle === "step"
-                      ? "width 0.15s ease"
-                      : undefined,
+                  // NOTE: no CSS `transition` — width is already frame-
+                  // interpolated above, and browser-timed transitions are
+                  // nondeterministic in Remotion renders.
                 }}
               />
             )}

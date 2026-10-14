@@ -42,6 +42,12 @@ interface TextCardProps {
   glassEdge?: string;
   /** Muted color for the kicker. */
   mutedColor?: string;
+  /** Duration of the ENCLOSING cut in frames — NOT the composition.
+   *
+   *  Inside a <Sequence>, useVideoConfig().durationInFrames returns the whole
+   *  composition, which made the exit choreography below fire hundreds of
+   * frames too late (i.e. never). Explainer passes the cut's true length. */
+  sceneDurationFrames?: number;
 }
 
 const normalize = (w: string) => w.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -70,16 +76,18 @@ export const TextCard: React.FC<TextCardProps> = ({
   glass,
   glassEdge,
   mutedColor,
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   const words = text.split(/\s+/).filter(Boolean);
   const accentSet = new Set(accentWords.map(normalize).filter(Boolean));
 
   // Exit choreography — drop slightly and fade over the last 9 frames.
-  const outStart = Math.max(20, durationInFrames - 9);
-  const exit = interpolate(frame, [outStart, durationInFrames], [1, 0], {
+  const outStart = Math.max(20, sceneFrames - 9);
+  const exit = interpolate(frame, [outStart, sceneFrames], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: (x) => 1 - Math.pow(1 - x, 2.4),

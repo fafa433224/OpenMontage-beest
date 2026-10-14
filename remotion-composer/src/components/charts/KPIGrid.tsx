@@ -8,7 +8,10 @@ import {
 
 interface Metric {
   label: string;
-  value: number;
+  /** Numeric values animate with a count-up. String values ("73%", "4x",
+   *  "1,200", "•") fade/scale in verbatim — they used to render as "NaN"
+   *  because count-up math ran on non-numeric strings. */
+  value: number | string;
   prefix?: string;
   suffix?: string;
   change?: number; // percentage change, positive = up, negative = down
@@ -47,6 +50,8 @@ interface KPIGridProps {
   positiveColor?: string;
   negativeColor?: string;
   animationStyle?: KPIAnimationStyle;
+  /** Duration of the ENCLOSING cut in frames (not the composition). */
+  sceneDurationFrames?: number;
 }
 
 export const KPIGrid: React.FC<KPIGridProps> = ({
@@ -61,9 +66,11 @@ export const KPIGrid: React.FC<KPIGridProps> = ({
   positiveColor = "#10B981",
   negativeColor = "#EF4444",
   animationStyle = "count-up",
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   const cols = Math.min(columns, metrics.length);
   const rows = Math.ceil(metrics.length / cols);
@@ -88,7 +95,7 @@ export const KPIGrid: React.FC<KPIGridProps> = ({
   // Fade out near end
   const fadeOut = interpolate(
     frame,
-    [durationInFrames - 15, durationInFrames],
+    [sceneFrames - 15, sceneFrames],
     [1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
@@ -283,7 +290,9 @@ const KPICardContent: React.FC<KPICardContentProps> = ({
   staggerDelay,
   animationStyle,
 }) => {
-  // Count-up animation
+  // Count-up animation. String values ("73%", "4x", "•") get a spring
+  // reveal instead of numeric interpolation — no NaN ever renders.
+  const isNumeric = typeof metric.value === "number" && Number.isFinite(metric.value);
   const countProgress =
     animationStyle === "count-up"
       ? spring({
@@ -297,8 +306,17 @@ const KPICardContent: React.FC<KPICardContentProps> = ({
           config: { damping: 18, stiffness: 60 },
         });
 
-  const displayValue = Math.round(metric.value * countProgress);
-  const formattedValue = formatDisplayValue(displayValue, metric.value);
+  let formattedValue: string;
+  if (isNumeric) {
+    const numericValue = metric.value as number;
+    const displayValue = Math.round(numericValue * countProgress);
+    formattedValue = formatDisplayValue(displayValue, numericValue);
+  } else {
+    // Non-numeric ("73%", "4x", "1,200", "•"): show verbatim — the card's
+    // own spring/pop entrance provides the animation; count-up math must
+    // never touch these (that was the "NaN" bug).
+    formattedValue = String(metric.value);
+  }
 
   // Change indicator animation
   const changeOpacity = interpolate(

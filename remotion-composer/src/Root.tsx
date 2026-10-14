@@ -109,13 +109,19 @@ export const THEMES: Record<string, ThemeConfig> = {
 export const DEFAULT_THEME = THEMES["flat-motion-graphics"];
 
 export function resolveTheme(props: Record<string, unknown>): ThemeConfig {
+  // Precedence: an explicit themeConfig object ALWAYS wins — it is the fully
+  // derived theme built from a style playbook's real colors by
+  // video_compose._build_theme_from_playbook. Checking the preset name first
+  // (the old order) silently discarded those derived colors whenever the
+  // playbook happened to share a name with a built-in preset
+  // (clean-professional / flat-motion-graphics / minimalist-diagram /
+  // anime-ghibli) — 4 of the 5 shipped playbooks never themed a render.
+  if (props.themeConfig && typeof props.themeConfig === "object") {
+    return { ...DEFAULT_THEME, ...(props.themeConfig as Partial<ThemeConfig>) };
+  }
   const themeName = (props.theme as string) || (props.playbook as string);
   if (themeName && THEMES[themeName]) {
     return THEMES[themeName];
-  }
-  // Allow custom theme passed as full object
-  if (props.themeConfig && typeof props.themeConfig === "object") {
-    return { ...DEFAULT_THEME, ...(props.themeConfig as Partial<ThemeConfig>) };
   }
   return DEFAULT_THEME;
 }

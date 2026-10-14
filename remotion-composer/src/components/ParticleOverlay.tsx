@@ -26,6 +26,13 @@ interface ParticleOverlayProps {
   count?: number;
   color?: string;
   intensity?: number;
+  /** Duration of the ENCLOSING scene in frames — NOT the composition.
+   *
+   *  Inside a <Sequence>, useVideoConfig().durationInFrames is the whole
+   *  composition: exit fades never fired and petal/sparkle stagger offsets
+   *  spread across the entire video (petals scheduled past the scene end
+   *  simply never appeared). AnimeScene passes the true scene length. */
+  sceneDurationFrames?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,9 +43,10 @@ const Fireflies: React.FC<{
   count: number;
   color: string;
   intensity: number;
-}> = ({ count, color, intensity }) => {
+  sceneFrames: number;
+}> = ({ count, color, intensity, sceneFrames }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
   const globalFadeIn = interpolate(frame, [0, fps * 0.8], [0, 1], {
     extrapolateLeft: "clamp",
@@ -46,7 +54,7 @@ const Fireflies: React.FC<{
   });
   const globalFadeOut = interpolate(
     frame,
-    [durationInFrames - fps * 0.5, durationInFrames],
+    [sceneFrames - fps * 0.5, sceneFrames],
     [1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
@@ -94,13 +102,15 @@ const Petals: React.FC<{
   count: number;
   color: string;
   intensity: number;
-}> = ({ count, color, intensity }) => {
+  sceneFrames: number;
+}> = ({ count, color, intensity, sceneFrames }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
+  const staggerWindow = Math.max(30, sceneFrames * 0.6);
   const globalFadeOut = interpolate(
     frame,
-    [durationInFrames - fps * 0.5, durationInFrames],
+    [sceneFrames - fps * 0.5, sceneFrames],
     [1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
@@ -112,7 +122,7 @@ const Petals: React.FC<{
         const speed = 0.3 + seededRandom(i * 3 + 5) * 0.5;
         const phase = seededRandom(i * 11 + 3) * Math.PI * 2;
         const size = 5 + seededRandom(i * 17 + 4) * 9;
-        const delay = seededRandom(i * 19 + 6) * durationInFrames * 0.6;
+        const delay = seededRandom(i * 19 + 6) * staggerWindow;
 
         const elapsed = Math.max(0, frame - delay);
         const t = (elapsed / fps) * speed;
@@ -159,9 +169,10 @@ const Sparkles: React.FC<{
   count: number;
   color: string;
   intensity: number;
-}> = ({ count, color, intensity }) => {
+  sceneFrames: number;
+}> = ({ count, color, intensity, sceneFrames }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
@@ -171,7 +182,7 @@ const Sparkles: React.FC<{
         const size = 6 + seededRandom(i * 17 + 4) * 10;
 
         const cycleLen = Math.round(fps * (1.2 + seededRandom(i * 23 + 8) * 2));
-        const offset = Math.round(seededRandom(i * 29 + 9) * durationInFrames);
+        const offset = Math.round(seededRandom(i * 29 + 9) * sceneFrames);
         const cycleFrame =
           ((frame - offset) % cycleLen + cycleLen) % cycleLen;
 
@@ -281,9 +292,10 @@ const LightRays: React.FC<{
   count: number;
   color: string;
   intensity: number;
-}> = ({ count, color, intensity }) => {
+  sceneFrames: number;
+}> = ({ count, color, intensity, sceneFrames }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
   const rays = Math.min(count, 5);
 
@@ -331,18 +343,23 @@ export const ParticleOverlay: React.FC<ParticleOverlayProps> = ({
   count = 20,
   color = "#FFE082",
   intensity = 0.6,
+  sceneDurationFrames,
 }) => {
+  // Fallback = composition length: correct for standalone compositions;
+  // callers embedding this in a <Sequence> pass the true scene length.
+  const { durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
   switch (type) {
     case "fireflies":
-      return <Fireflies count={count} color={color} intensity={intensity} />;
+      return <Fireflies count={count} color={color} intensity={intensity} sceneFrames={sceneFrames} />;
     case "petals":
-      return <Petals count={count} color={color} intensity={intensity} />;
+      return <Petals count={count} color={color} intensity={intensity} sceneFrames={sceneFrames} />;
     case "sparkles":
-      return <Sparkles count={count} color={color} intensity={intensity} />;
+      return <Sparkles count={count} color={color} intensity={intensity} sceneFrames={sceneFrames} />;
     case "mist":
       return <Mist count={count} color={color} intensity={intensity} />;
     case "light-rays":
-      return <LightRays count={count} color={color} intensity={intensity} />;
+      return <LightRays count={count} color={color} intensity={intensity} sceneFrames={sceneFrames} />;
     default:
       return null;
   }

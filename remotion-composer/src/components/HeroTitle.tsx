@@ -31,6 +31,9 @@ type HeroTitleProps = {
   scrimBackground?: string;
   /** Skip the dark wash — new per-scene backgrounds don't need it. */
   noScrim?: boolean;
+  /** Duration of the ENCLOSING cut in frames (not the composition) —
+   *  makes the exit lift actually run inside Explainer Sequences. */
+  sceneDurationFrames?: number;
 };
 
 const DEFAULT_SCRIM =
@@ -44,9 +47,11 @@ export const HeroTitle: React.FC<HeroTitleProps> = ({
   subtitleColor = "#A78BFA",
   scrimBackground = DEFAULT_SCRIM,
   noScrim = false,
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   const titleChars = title.split("");
 
@@ -55,8 +60,8 @@ export const HeroTitle: React.FC<HeroTitleProps> = ({
   const blockScale = interpolate(punch, [0, 1], [1.06, 1.0]);
 
   // Exit: lift + fade over the last 10 frames.
-  const outStart = Math.max(20, durationInFrames - 10);
-  const exit = interpolate(frame, [outStart, durationInFrames], [1, 0], {
+  const outStart = Math.max(20, sceneFrames - 10);
+  const exit = interpolate(frame, [outStart, sceneFrames], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: (x) => 1 - Math.pow(1 - x, 2.2),

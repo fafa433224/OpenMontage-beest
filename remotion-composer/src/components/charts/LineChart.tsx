@@ -34,6 +34,8 @@ interface LineChartProps {
   yLabel?: string;
   animationStyle?: LineAnimationStyle;
   strokeWidth?: number;
+  /** Duration of the ENCLOSING cut in frames (not the composition). */
+  sceneDurationFrames?: number;
 }
 
 export const LineChart: React.FC<LineChartProps> = ({
@@ -51,9 +53,11 @@ export const LineChart: React.FC<LineChartProps> = ({
   yLabel,
   animationStyle = "draw",
   strokeWidth = 3,
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   // Chart layout
   const chartLeft = 160;
@@ -93,7 +97,7 @@ export const LineChart: React.FC<LineChartProps> = ({
   // Fade out near end
   const fadeOut = interpolate(
     frame,
-    [durationInFrames - 15, durationInFrames],
+    [sceneFrames - 15, sceneFrames],
     [1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );

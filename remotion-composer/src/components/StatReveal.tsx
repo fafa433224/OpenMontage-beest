@@ -13,6 +13,8 @@ interface StatRevealProps {
   /** Label color. Defaults to near-white; pass the theme's textColor on light themes. */
   textColor?: string;
   position?: "center" | "bottom-right" | "right";
+  /** Duration of the ENCLOSING cut in frames (not the composition). */
+  sceneDurationFrames?: number;
 }
 
 export const StatReveal: React.FC<StatRevealProps> = ({
@@ -21,9 +23,11 @@ export const StatReveal: React.FC<StatRevealProps> = ({
   accentColor = "#A78BFA",
   textColor = "#F8FAFC",
   position = "bottom-right",
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   // Bouncy entrance
   const scale = spring({
@@ -41,8 +45,8 @@ export const StatReveal: React.FC<StatRevealProps> = ({
   });
 
   // Exit
-  const exitStart = durationInFrames - 12;
-  const fadeOut = interpolate(frame, [exitStart, durationInFrames], [1, 0], {
+  const exitStart = sceneFrames - 12;
+  const fadeOut = interpolate(frame, [exitStart, sceneFrames], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });

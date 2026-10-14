@@ -12,6 +12,7 @@
     "@remotion/cli": "^4.0.484",
     "@remotion/google-fonts": "^4.0.484",
     "@remotion/media": "^4.0.484",
+    "@remotion/media-utils": "4.0.484",
     "@remotion/player": "^4.0.484",
     "@remotion/transitions": "^4.0.484",
     "d3-geo": "^3.1.1",

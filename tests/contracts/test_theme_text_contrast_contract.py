@@ -74,8 +74,20 @@ def test_overlay_renderer_receives_the_theme() -> None:
     """OverlayRenderer had no access to the theme at all, so overlays could not follow it."""
     source = _read("Explainer.tsx")
 
-    assert "OverlayRenderer: React.FC<{ overlay: Overlay; theme: ThemeConfig }>" in source
-    assert "<OverlayRenderer overlay={overlay} theme={theme} />" in source
+    assert "overlay: Overlay" in source
+    assert "theme: ThemeConfig" in source
+    # v2.2: the overlay's own frame length is passed too, so each overlay's
+    # exit choreography aims at its Sequence end instead of the composition end.
+    assert "durationInFrames: number" in source
+    assert (
+        "<OverlayRenderer overlay={overlay} theme={theme} durationInFrames={duration} />"
+        in source
+    )
+    # Every themed overlay component receives the true scene length.
+    for component in ("SectionTitle", "StatReveal", "HeroTitle"):
+        idx = source.index(f"<{component}", source.index('if (overlay.type === "'))
+        block = source[idx : source.index("/>", idx) + 2]
+        assert "sceneDurationFrames={durationInFrames}" in block, component
 
 
 @pytest.mark.parametrize("component", ["SectionTitle", "StatReveal", "HeroTitle"])

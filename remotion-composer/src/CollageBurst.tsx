@@ -46,6 +46,11 @@ export type CollageBurstProps = {
   curtainStartSeconds: number;
   curtainEndSeconds: number;
   clips: CollageClip[];
+  /** Pre-reveal opening card text. Defaults kept for the original demo —
+   *  previously these two lines were baked into the component so every
+   *  render read "When you realize your daughters / deserve these lines". */
+  openingLineOne?: string;
+  openingLineTwo?: string;
 };
 
 // ----------------------------------------------------------------------------
@@ -421,6 +426,8 @@ export const CollageBurst: React.FC<CollageBurstProps> = ({
   curtainStartSeconds,
   curtainEndSeconds,
   clips,
+  openingLineOne,
+  openingLineTwo,
 }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
@@ -556,8 +563,8 @@ export const CollageBurst: React.FC<CollageBurstProps> = ({
 
       {/* ---------- Opening text (pre-reveal, on black) ---------- */}
       <OpeningText
-        lineOne="When you realize your daughters"
-        lineTwo="deserve these lines"
+        lineOne={openingLineOne ?? "When you realize your daughters"}
+        lineTwo={openingLineTwo ?? "deserve these lines"}
         fadeInStart={Math.round(0.3 * fps)}
         fadeInEnd={Math.round(0.9 * fps)}
         fadeOutStart={Math.round(1.8 * fps)}

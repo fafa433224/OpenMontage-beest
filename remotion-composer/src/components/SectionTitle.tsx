@@ -13,6 +13,8 @@ interface SectionTitleProps {
   /** Title color. Defaults to near-white; pass the theme's textColor on light themes. */
   textColor?: string;
   position?: "top-left" | "bottom-left" | "center";
+  /** Duration of the ENCLOSING cut in frames (not the composition). */
+  sceneDurationFrames?: number;
 }
 
 export const SectionTitle: React.FC<SectionTitleProps> = ({
@@ -21,9 +23,11 @@ export const SectionTitle: React.FC<SectionTitleProps> = ({
   accentColor = "#22D3EE",
   textColor = "#F8FAFC",
   position = "top-left",
+  sceneDurationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const sceneFrames = sceneDurationFrames ?? durationInFrames;
 
   // Entrance spring
   const slideIn = spring({
@@ -33,8 +37,8 @@ export const SectionTitle: React.FC<SectionTitleProps> = ({
   });
 
   // Exit fade
-  const exitStart = durationInFrames - 15;
-  const fadeOut = interpolate(frame, [exitStart, durationInFrames], [1, 0], {
+  const exitStart = sceneFrames - 15;
+  const fadeOut = interpolate(frame, [exitStart, sceneFrames], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
