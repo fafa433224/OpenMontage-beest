@@ -96,9 +96,16 @@ class OpenSoraStore:
     @property
     def embedder(self):
         if self._embedder is None:
-            from lib.clip_embedder import ClipEmbedder
+            # lib/clip_embedder exposes module-level embed_texts/embed_images
+            # (lazy torch/transformers load inside). Wrap them in a tiny
+            # adapter so call sites keep the .embedder.embed_*() shape.
+            import lib.clip_embedder as _ce
 
-            self._embedder = ClipEmbedder()
+            class _ModuleEmbedder:
+                embed_texts = staticmethod(_ce.embed_texts)
+                embed_images = staticmethod(_ce.embed_images)
+
+            self._embedder = _ModuleEmbedder()
         return self._embedder
 
     # ------------------------------------------------------------------

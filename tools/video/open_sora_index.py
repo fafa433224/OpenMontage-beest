@@ -251,6 +251,28 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command == "build":
         stats = build_index(root, limit=args.limit, batch=args.batch)
         print(json.dumps(stats, indent=2))
+        # Hard contract: a non-empty manifest that yields a ZERO-row index is
+        # always a bug (embedding failed per-row; errors were collected but
+        # ingest still exits cleanly). Silent success here is exactly the
+        # smoke-test trap that once shipped a synth-fallback Kaggle run that
+        # *looked* green — fail loudly instead so callers fall back visibly.
+        rows_in = int(stats.get("rows_in") or 0)
+        total_rows = int(stats.get("total_rows") or 0)
+        error_count = int(stats.get("error_count") or 0)
+        if rows_in > 0 and total_rows == 0:
+            print(
+                f"ERROR: manifest had {rows_in} rows but the index has 0 "
+                f"({error_count} per-row errors). First errors: "
+                f"{stats.get('errors', [])[:3]}",
+                file=sys.stderr,
+            )
+            return 1
+        if error_count:
+            print(
+                f"WARNING: {error_count}/{rows_in} rows failed to embed; "
+                f"index holds {total_rows} rows.",
+                file=sys.stderr,
+            )
         return 0
     return 1
 
